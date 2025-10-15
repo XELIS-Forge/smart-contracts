@@ -1,72 +1,73 @@
-entry stake() {
+entry stake_tokens() {
     let storage: Storage = Storage::new();
-    let dao: Hash = Asset::get_by_id(1).expect("missingDaoToken").get_hash();
-    let deposit: u64 = get_deposit_for_asset(dao).expect("missingDaoDeposit");
+    let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
+    let deposit_amount: u64 = get_deposit_for_asset(dao_hash).expect("missingDaoDeposit");
 
-    let sender: Address = Transaction::current().expect("missingTransaction").source();
+    let staker: Address = Transaction::current().expect("missingTransaction").source();
+    let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
 
-    let stakes: map<Address, u64> = storage.load("stakes").expect("missingStakesMap");
+    let current_stake: u64 = stake_ledger.get(staker).unwrap_or(0);
+    let updated_stake: u64 = current_stake + deposit_amount;
+    stake_ledger.insert(staker, updated_stake);
 
-    let current: u64 = stakes.get(sender).unwrap_or(0);
-    let newAmount: u64 = current + deposit;
-    stakes.insert(sender, newAmount);
+    storage.store("stake_ledger", stake_ledger);
 
-    storage.store("stakes", stakes);
-
-    let total: u64 = storage.load("totalStaked").unwrap_or(0);
-    storage.store("totalStaked", total + deposit);
+    let total_staked: u64 = storage.load("total_staked").unwrap_or(0);
+    storage.store("total_staked", total_staked + deposit_amount);
     return 0;
 }
 
-entry unstake(amount: u64) {
+entry unstake_tokens(amount: u64) {
     let storage: Storage = Storage::new();
-    let dao: Hash = Asset::get_by_id(1).expect("missingDaoToken").get_hash();
-    let sender: Address = Transaction::current().expect("missingTransaction").source();
+    let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
+    let staker: Address = Transaction::current().expect("missingTransaction").source();
 
-    let stakes: map<Address, u64> = storage.load("stakes").expect("missingStakesMap");
-    let staked: u64 = stakes.get(sender).unwrap_or(0);
-    require(staked >= amount, "unstakeTooHigh");
+    let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
+    let staked_amount: u64 = stake_ledger.get(staker).unwrap_or(0);
+    require(staked_amount >= amount, "unstakeTooHigh");
     
-    let total: u64 = storage.load("totalStaked").expect("missingTotalStake");
-    storage.store("totalStaked", total - amount);
+    let total_staked: u64 = storage.load("total_staked").expect("missingTotalStaked");
+    storage.store("total_staked", total_staked - amount);
     
-    if staked == amount {
-        stakes.swap_remove(sender)
+    if staked_amount == amount {
+        stake_ledger.swap_remove(staker);
     } else {
-        stakes.insert(sender, staked - amount);
+        stake_ledger.insert(staker, staked_amount - amount);
     }
 
-    storage.store("stakes", stakes);
+    storage.store("stake_ledger", stake_ledger);
 
-    transfer(sender, amount, dao);
+    transfer(staker, amount, dao_hash);
     return 0;
 }
 
-pub fn depositFee(asset: Hash) {
+pub fn distribute_fee(asset_hash: Hash) {
     let storage: Storage = Storage::new();
-    let deposit: u64 = get_deposit_for_asset(asset).expect("missingFeeDeposit");
-    let total: u64 = storage.load("totalStaked").expect("missingTotalStake");
-    require(total > 0, "noStakers");
+    let fee_deposit: u64 = get_deposit_for_asset(asset_hash).expect("missingFeeDeposit");
+    let total_staked: u64 = storage.load("total_staked").expect("missingTotalStaked");
+    require(total_staked > 0, "noStakers");
 
-    let stakes: map<Address, u64> = storage.load("stakes").expect("missingStakesMap");
+    let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
 
-    foreach (address, staked) in stakes.entries() {
-        if staked == 0 { continue; }
-        let share: u64 = ((deposit as u128 * staked as u128) / total as u128) as u64;
+    foreach (address, staked_amount) in stake_ledger.entries() {
+        if staked_amount == 0 { continue; }
+        let share: u64 = ((fee_deposit as u128 * staked_amount as u128) / total_staked as u128) as u64;
         if share > 0 {
-            transfer(address, share, asset);
+            transfer(address, share, asset_hash);
         }
     }
 }
 
-entry clear_stuck(asset: Hash) {
+entry recover_asset(asset_hash: Hash) {
     let storage: Storage = Storage::new();
-    let dao: Hash = Asset::get_by_id(1).expect("missingDaoToken").get_hash();
-    require(asset != dao, "assetCannotBeDAO");
-    let source: Address = Transaction::current().expect("missingTransaction").source();
-    let owner: Address = storage.load("owner").expect("missingDAOOwner");
-    require(source == owner, "notDAOOwner")
-    transfer(source, get_balance_for_asset(asset), asset)
+    let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
+    require(asset_hash != dao_hash, "assetCannotBeDAO");
+
+    let caller: Address = Transaction::current().expect("missingTransaction").source();
+    let owner: Address = storage.load("contract_owner").expect("missingContractOwner");
+    require(caller == owner, "notContractOwner");
+
+    transfer(caller, get_balance_for_asset(asset_hash), asset_hash);
     return 0;
 }
 
@@ -74,7 +75,7 @@ hook constructor() -> u64 {
     let storage: Storage = Storage::new();
     let deployer: Address = Transaction::current().expect("missingTransaction").source();
 
-    let daoAsset: optional<Asset> = Asset::create(
+    let dao_asset: optional<Asset> = Asset::create(
         1, 
         "FORGE DAO", 
         "FORGE", 
@@ -82,18 +83,17 @@ hook constructor() -> u64 {
         MaxSupplyMode::Fixed{max_supply: 100_000_000 * 10 ** 8}
     );
 
-    require(daoAsset.is_some(), "daoAssetNotCreated");
-    let createdDao: Asset = daoAsset.expect("daoAssetCreationFailed");
+    let created_dao: Asset = dao_asset.expect("daoAssetCreationFailed");
 
-    let daoHash: Hash = createdDao.get_hash();
-    transfer(deployer, createdDao.get_supply(), daoHash);
+    let dao_hash: Hash = created_dao.get_hash();
+    transfer(deployer, created_dao.get_supply(), dao_hash);
     
-    let stakes: map<Address, u64> = {};
+    let empty_stake_ledger: map<Address, u64> = {};
     
-    storage.store("daoToken", daoHash);
-    storage.store("stakes", stakes);
-    storage.store("totalStaked", 0);
-    storage.store("owner", deployer)
+    storage.store("dao_token", dao_hash);
+    storage.store("stake_ledger", empty_stake_ledger);
+    storage.store("total_staked", 0);
+    storage.store("contract_owner", deployer);
 
     return 0;
 }

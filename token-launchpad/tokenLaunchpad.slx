@@ -1,5 +1,5 @@
-struct CAsset {
-    assetId: u64,
+struct MetaAsset {
+    asset_id: u64,
     owner: optional<Address>,
     icon: string
 }
@@ -28,20 +28,20 @@ fn (balance Balance) refund() {
     }
 }
 
-fn mintAndTransfer(asset: Asset, amount: u64, owner: Address, asset_hash: Hash) {
+fn mint_and_transfer(asset: Asset, amount: u64, owner: Address, asset_hash: Hash) {
     asset.mint(amount);
     transfer(owner, amount, asset_hash);
 }
 
-fn newAssetId() -> u64 {
+fn new_asset_id() -> u64 {
     let storage: Storage = Storage::new();
-    let assetId: u64 = storage.load("lastAssetId").expect("missingLastAssetId");
-    assetId = assetId + 1;
-    storage.store("lastAssetId", assetId);
-    return assetId;
+    let asset_id: u64 = storage.load("lastAssetId").expect("missingLastAssetId");
+    asset_id = asset_id + 1;
+    storage.store("lastAssetId", asset_id);
+    return asset_id;
 }
 
-entry deployAsset(name: string, ticker: string, decimals: u8, supply: u64, maxSupplyMode: MaxSupplyMode, icon: string) {
+entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
     let storage: Storage = Storage::new();
     let owner: Address = Transaction::current().expect("noTransaction").source();
     let fee: u64 = storage.load("fee").expect("missingFee");
@@ -55,50 +55,49 @@ entry deployAsset(name: string, ticker: string, decimals: u8, supply: u64, maxSu
     
     xel_balance.charge(fee, true);
     
-    let assetId: u64 = newAssetId();
-    let finalMaxSupply: u64 = 0;
+    let asset_id: u64 = new_asset_id();
+    let final_max_supply: u64 = 0;
     let asset: optional<Asset>;
 
-    xel_balance.charge(100000000, false); // Deduct protocol asset fee from tracked refund
+    xel_balance.charge(100000000, false);
     
-    asset = Asset::create(assetId, name, ticker, decimals, maxSupplyMode);
+    asset = Asset::create(asset_id, name, ticker, decimals, max_supply_mode);
     
     require(asset.is_some(), "assetNotCreated");
-    let createdAsset: Asset = asset.expect("assetCreationFailed");
-    let assetHash: Hash = createdAsset.get_hash()
+    let created_asset: Asset = asset.expect("assetCreationFailed");
+    let asset_hash: Hash = created_asset.get_hash();
      
-    match maxSupplyMode {
-        MaxSupplyMode::Fixed { max_supply }  => {transfer(owner, max_supply, assetHash);}
+    match max_supply_mode {
+        MaxSupplyMode::Fixed { max_supply }  => {transfer(owner, max_supply, asset_hash);}
         MaxSupplyMode::Mintable { max_supply } => {
             require(supply <= max_supply, "mintOverMax");
-            mint_and_transfer(createdAsset, supply, owner, assetHash);
+            mint_and_transfer(created_asset, supply, owner, asset_hash);
         }
-        MaxSupplyMode::None => {mint_and_transfer(createdAsset, supply, owner, assetHash);}
+        MaxSupplyMode::None => {mint_and_transfer(created_asset, supply, owner, asset_hash);}
     }
     
-    let casset: CAsset = CAsset { 
-        assetId: assetId, 
+    let meta_asset: MetaAsset = MetaAsset { 
+        asset_id: asset_id, 
         owner: owner,
         icon: icon
     };
     
     let source: Address = Transaction::current().expect("noTransaction").source();
     
-    storage.store(assetHash, casset);
-    fire_event(1, assetHash);
+    storage.store(asset_hash, meta_asset);
+    fire_event(1, asset_hash);
     xel_balance.refund();
     return 0;
 }
 
-entry mint(assetHash: Hash, amount: u64) {
-    let casset: CAsset = Storage::new().load(assetHash).expect("assetNotFound");
+entry mint(asset_hash: Hash, amount: u64) {
+    let meta_asset: MetaAsset = Storage::new().load(asset_hash).expect("assetNotFound");
     let source: Address = Transaction::current().expect("noTransaction").source();
     
-    require(source == casset.owner.expect("assetOwnerNotSet"), "notAssetOwner");
-    let asset: Asset = Asset::get_by_id(casset.assetId).expect("assetNotFoundById");
+    require(source == meta_asset.owner.expect("assetOwnerNotSet"), "notAssetOwner");
+    let asset: Asset = Asset::get_by_id(meta_asset.asset_id).expect("assetNotFoundById");
     require(asset.is_mintable(), "assetNotMintable");
     
-
     require((asset.get_supply() + amount) <= asset.get_max_supply().unwrap_or(u64::MAX), "mintOverMax");
     
     asset.mint(amount);
@@ -106,41 +105,41 @@ entry mint(assetHash: Hash, amount: u64) {
     return 0;
 }
 
-entry transferOwnership(assetHash: Hash, newOwner: Address) {
+entry transfer_ownership(asset_hash: Hash, new_owner: Address) {
     let storage: Storage = Storage::new();
-    let casset: CAsset = storage.load(assetHash).expect("assetNotFound");
-    require(Transaction::current().expect("noTransaction").source() == casset.owner.expect("noAssetOwner"), "notAssetOwner");
+    let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
+    require(Transaction::current().expect("noTransaction").source() == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
     
-    casset.owner = newOwner;
-    storage.store(assetHash, casset);
+    meta_asset.owner = new_owner;
+    storage.store(asset_hash, meta_asset);
     return 0;
 }
 
-entry renounceOwnership(assetHash: Hash) {
+entry renounce_ownership(asset_hash: Hash) {
     let storage: Storage = Storage::new();
-    let casset: CAsset = storage.load(assetHash).expect("assetNotFound");
-    require(Transaction::current().expect("noTransaction").source() == casset.owner.expect("noAssetOwner"), "notAssetOwner");
+    let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
+    require(Transaction::current().expect("noTransaction").source() == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
     
-    casset.owner = null;
-    storage.store(assetHash, casset);
+    meta_asset.owner = null;
+    storage.store(asset_hash, meta_asset);
     return 0;
 }
 
-entry setIcon(assetHash: Hash, newIcon: string) {
+entry set_icon(asset_hash: Hash, new_icon: string) {
     let storage: Storage = Storage::new();
-    let casset: CAsset = storage.load(assetHash).expect("assetNotFound");
-    require(Transaction::current().expect("noTransaction").source() == casset.owner.expect("noAssetOwner"), "notAssetOwner");
+    let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
+    require(Transaction::current().expect("noTransaction").source() == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
     
-    casset.icon = newIcon;
-    storage.store(assetHash, casset);
+    meta_asset.icon = new_icon;
+    storage.store(asset_hash, meta_asset);
     return 0;
 }
 
-entry setFee(newFee: u64) {
+entry set_fee(new_fee: u64) {
     let storage: Storage = Storage::new();
     let owner: Address = storage.load("owner").expect("missingContractOwner");
     require(Transaction::current().expect("noTransaction").source() == owner, "notContractOwner");
-    storage.store("fee", newFee);
+    storage.store("fee", new_fee);
     return 0;
 }
 
