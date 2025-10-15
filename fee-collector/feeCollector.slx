@@ -79,7 +79,7 @@ hook constructor() -> u64 {
         "FORGE DAO", 
         "FORGE", 
         8, 
-        100_000_000 * 10 ** 8
+        MaxSupplyMode::Fixed{max_supply: 100_000_000 * 10 ** 8}
     );
 
     require(daoAsset.is_some(), "daoAssetNotCreated");

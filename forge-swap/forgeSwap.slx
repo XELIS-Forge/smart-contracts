@@ -50,7 +50,7 @@ fn createPair(tokenAHash: Hash, tokenBHash: Hash) -> Hash {
     let name: string = tickerA + " " + tickerB + " LP"; 
     let ticker: string = "LP";
     let decimals: u8 = 8; 
-    let asset: optional<Asset> = Asset::create(assetId, name, ticker, decimals, null);
+    let asset: optional<Asset> = Asset::create(assetId, name, ticker, decimals, MaxSupplyMode::None);
     require(asset.is_some(), "assetNotCreated");
     let asset: Asset = asset.expect("assetCreationFailed");
     

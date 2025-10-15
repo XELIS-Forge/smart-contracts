@@ -1,8 +1,6 @@
 struct CAsset {
     assetId: u64,
     owner: optional<Address>,
-    mintable: bool,
-    maxSupply: u64,
     icon: string
 }
 
@@ -30,6 +28,11 @@ fn (balance Balance) refund() {
     }
 }
 
+fn mintAndTransfer(asset: Asset, amount: u64, owner: Address, asset_hash: Hash) {
+    asset.mint(amount);
+    transfer(owner, amount, asset_hash);
+}
+
 fn newAssetId() -> u64 {
     let storage: Storage = Storage::new();
     let assetId: u64 = storage.load("lastAssetId").expect("missingLastAssetId");
@@ -38,7 +41,7 @@ fn newAssetId() -> u64 {
     return assetId;
 }
 
-entry deployAsset(name: string, ticker: string, supply: u64, decimals: u8, mintable: bool, maxSupply: u64, icon: string) {
+entry deployAsset(name: string, ticker: string, decimals: u8, supply: u64, maxSupplyMode: MaxSupplyMode, icon: string) {
     let storage: Storage = Storage::new();
     let owner: Address = Transaction::current().expect("noTransaction").source();
     let fee: u64 = storage.load("fee").expect("missingFee");
@@ -58,30 +61,24 @@ entry deployAsset(name: string, ticker: string, supply: u64, decimals: u8, minta
 
     xel_balance.charge(100000000, false); // Deduct protocol asset fee from tracked refund
     
-    if mintable {
-        asset = Asset::create(assetId, name, ticker, decimals, null);
-        finalMaxSupply = (maxSupply == 0) ? 18446744073709551614 : maxSupply;
-    } else {
-        asset = Asset::create(assetId, name, ticker, decimals, supply);
-        finalMaxSupply = supply;
-    }
+    asset = Asset::create(assetId, name, ticker, decimals, maxSupplyMode);
     
     require(asset.is_some(), "assetNotCreated");
     let createdAsset: Asset = asset.expect("assetCreationFailed");
-    
-    
-    if mintable {
-        createdAsset.mint(supply);
-    }
-    
     let assetHash: Hash = createdAsset.get_hash()
-    transfer(owner, supply, assetHash);
+     
+    match maxSupplyMode {
+        MaxSupplyMode::Fixed { max_supply }  => {transfer(owner, max_supply, assetHash);}
+        MaxSupplyMode::Mintable { max_supply } => {
+            require(supply <= max_supply, "mintOverMax");
+            mint_and_transfer(createdAsset, supply, owner, assetHash);
+        }
+        MaxSupplyMode::None => {mint_and_transfer(createdAsset, supply, owner, assetHash);}
+    }
     
     let casset: CAsset = CAsset { 
         assetId: assetId, 
-        owner: owner, 
-        mintable: mintable, 
-        maxSupply: maxSupply, 
+        owner: owner,
         icon: icon
     };
     
@@ -98,10 +95,11 @@ entry mint(assetHash: Hash, amount: u64) {
     let source: Address = Transaction::current().expect("noTransaction").source();
     
     require(source == casset.owner.expect("assetOwnerNotSet"), "notAssetOwner");
-    require(casset.mintable, "assetNotMintable");
-    
     let asset: Asset = Asset::get_by_id(casset.assetId).expect("assetNotFoundById");
-    require((asset.get_supply() + amount) <= casset.maxSupply, "mintOverMax");
+    require(asset.is_mintable(), "assetNotMintable");
+    
+
+    require((asset.get_supply() + amount) <= asset.get_max_supply().unwrap_or(u64::MAX), "mintOverMax");
     
     asset.mint(amount);
     transfer(source, amount, asset.get_hash());
