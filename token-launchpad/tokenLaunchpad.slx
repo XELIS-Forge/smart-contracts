@@ -85,7 +85,7 @@ entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_
     let source: Address = get_caller().expect("noCaller");
     
     storage.store(asset_hash, meta_asset);
-    fire_event(1, (Transaction::current().expect("missingTransaction).hash(), asset_hash));
+    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), asset_hash));
     xel_balance.refund();
     return 0;
 }
