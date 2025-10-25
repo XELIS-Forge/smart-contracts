@@ -16,7 +16,7 @@ fn (balance Balance) charge(cost: u64, payable: bool) {
     if (payable) {
         let dao_hash: Hash = Storage::new().load("DAOHash").expect("missingDAOHash");
         let dao_contract: Module = Module::new(dao_hash).unwrap();
-        dao_contract.execute(2, [balance.asset], { balance.asset: cost });
+        dao_contract.call(2, [balance.asset], { balance.asset: cost });
     }
 
     balance.balance -= cost;
