@@ -155,7 +155,7 @@ fn mint_liquidity(amount_a: u64, amount_b: u64, liquidity_token_hash: Hash) {
     l_reserve_a = l_reserve_a + amount_a;
     l_reserve_b = l_reserve_b + amount_b;
     lp_asset.reserves = {token_a: l_reserve_a, token_b: l_reserve_b};
-    fire_event(1, lp_asset.reserves);
+    fire_event(1, (Transaction::current().expect("missingTransaction).hash(), lp_asset.reserves));
     storage.store(liquidity_token_hash, lp_asset);
 }
 
@@ -221,7 +221,7 @@ entry remove_liquidity(liquidity_token_hash: Hash) {
     let source: Address = get_caller().expect("noCaller");
     transfer(source, amount_a, token_a);
     transfer(source, amount_b, token_b);
-    fire_event(1, lp_asset.reserves);
+    fire_event(1, (Transaction::current().expect("missingTransaction).hash(), lp_asset.reserves));
     return 0;
 }
 
@@ -244,7 +244,7 @@ entry swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
     l_reserve_in = l_reserve_in + amount_in;
     l_reserve_out = l_reserve_out - amount_out;
     lp_asset.reserves = {token_in_hash: l_reserve_in, token_out_hash: l_reserve_out};
-    fire_event(1, lp_asset.reserves);
+    fire_event(1, (Transaction::current().expect("missingTransaction).hash(), lp_asset.reserves));
     storage.store(lp_asset_hash, lp_asset);
 
     transfer(get_caller().expect("noCaller"), amount_out, token_out_hash);
