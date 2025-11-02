@@ -75,14 +75,14 @@ fn calculate_optimal_liquidity(amount_a_in: u64, amount_b_in: u64, reserve_a: u6
     let amount_b_optimal: u64 = quote(amount_a_in, reserve_a, reserve_b);
     if amount_b_optimal <= amount_b_in {
         if amount_b_optimal < amount_b_in {
-            transfer(Transaction::current().expect("noTransaction").source(), amount_b_in - amount_b_optimal, token_b);
+            transfer(get_caller().expect("noCaller"), amount_b_in - amount_b_optimal, token_b);
         }
         return (amount_a_in, amount_b_optimal);
     } else {
         let amount_a_optimal: u64 = quote(amount_b_in, reserve_b, reserve_a);
         assert(amount_a_optimal <= amount_a_in);
         if amount_a_optimal < amount_a_in {
-            transfer(Transaction::current().expect("noTransaction").source(), amount_a_in - amount_a_optimal, token_a);
+            transfer(get_caller().expect("noCaller"), amount_a_in - amount_a_optimal, token_a);
         }
         return (amount_a_optimal, amount_b_in);
     }
@@ -150,12 +150,12 @@ fn mint_liquidity(amount_a: u64, amount_b: u64, liquidity_token_hash: Hash) {
     require(liquidity > 0, "insufficientLiquidityMinted");
     
     asset.mint(liquidity);
-    transfer(Transaction::current().expect("noTransaction").source(), liquidity, liquidity_token_hash);
+    transfer(get_caller().expect("noCaller"), liquidity, liquidity_token_hash);
 
     l_reserve_a = l_reserve_a + amount_a;
     l_reserve_b = l_reserve_b + amount_b;
     lp_asset.reserves = {token_a: l_reserve_a, token_b: l_reserve_b};
-    fire_event(1, lp_asset.reserves);
+    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
     storage.store(liquidity_token_hash, lp_asset);
 }
 
@@ -166,7 +166,7 @@ fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, 
 
     let dao_hash: Hash = Storage::new().load("DAOHash").expect("missingDAOHash");
     let dao_contract: Module = Module::new(dao_hash).unwrap();
-    dao_contract.execute(2, [token_in_hash], { token_in_hash: dev_fee });
+    dao_contract.call(2, [token_in_hash], { token_in_hash: dev_fee });
 
     let amount_in_with_lp_fee: u128 = amount_in_with_dev_fee * (9978);
     let numerator: u128 = amount_in_with_lp_fee * (l_reserve_out as u128);
@@ -218,10 +218,10 @@ entry remove_liquidity(liquidity_token_hash: Hash) {
     lp_asset.reserves = {token_a: l_reserve_a, token_b: l_reserve_b};
     storage.store(liquidity_token_hash, lp_asset);
 
-    let source: Address = Transaction::current().expect("noTransaction").source();
+    let source: Address = get_caller().expect("noCaller");
     transfer(source, amount_a, token_a);
     transfer(source, amount_b, token_b);
-    fire_event(1, lp_asset.reserves);
+    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
     return 0;
 }
 
@@ -244,17 +244,17 @@ entry swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
     l_reserve_in = l_reserve_in + amount_in;
     l_reserve_out = l_reserve_out - amount_out;
     lp_asset.reserves = {token_in_hash: l_reserve_in, token_out_hash: l_reserve_out};
-    fire_event(1, lp_asset.reserves);
+    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
     storage.store(lp_asset_hash, lp_asset);
 
-    transfer(Transaction::current().expect("noTransaction").source(), amount_out, token_out_hash);
+    transfer(get_caller().expect("noCaller"), amount_out, token_out_hash);
     return 0;
 }
 
 hook constructor() -> u64 {
     let storage: Storage = Storage::new();
     storage.store("lastAssetId", 0);
-    let source: Address = Transaction::current().expect("noTransaction").source();
+    let source: Address = get_caller().expect("noCaller");
     storage.store("DAOHash", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));
     storage.store("owner", source);
     storage.store("feeAddress", source);

@@ -3,7 +3,7 @@ entry stake_tokens() {
     let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
     let deposit_amount: u64 = get_deposit_for_asset(dao_hash).expect("missingDaoDeposit");
 
-    let staker: Address = Transaction::current().expect("missingTransaction").source();
+    let staker: Address = get_caller().expect("noCaller");
     let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
 
     let current_stake: u64 = stake_ledger.get(staker).unwrap_or(0);
@@ -20,7 +20,7 @@ entry stake_tokens() {
 entry unstake_tokens(amount: u64) {
     let storage: Storage = Storage::new();
     let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
-    let staker: Address = Transaction::current().expect("missingTransaction").source();
+    let staker: Address = get_caller().expect("noCaller");
 
     let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
     let staked_amount: u64 = stake_ledger.get(staker).unwrap_or(0);
@@ -63,7 +63,7 @@ entry recover_asset(asset_hash: Hash) {
     let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
     require(asset_hash != dao_hash, "assetCannotBeDAO");
 
-    let caller: Address = Transaction::current().expect("missingTransaction").source();
+    let caller: Address = get_caller().expect("noCaller");
     let owner: Address = storage.load("contract_owner").expect("missingContractOwner");
     require(caller == owner, "notContractOwner");
 
@@ -73,7 +73,7 @@ entry recover_asset(asset_hash: Hash) {
 
 hook constructor() -> u64 {
     let storage: Storage = Storage::new();
-    let deployer: Address = Transaction::current().expect("missingTransaction").source();
+    let deployer: Address = get_caller().expect("noCaller");
 
     let dao_asset: optional<Asset> = Asset::create(
         1, 
