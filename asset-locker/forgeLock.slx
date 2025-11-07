@@ -1,0 +1,129 @@
+struct Lock {
+    owner: Address,
+    asset_hash: Hash,
+    amount_total: u64,
+    amount_withdrawn: u64,
+    start_time: u64,
+    end_time: u64,
+    interval_seconds: u64,
+    total_intervals: u64,
+    last_withdraw_time: u64
+}
+
+fn min(x: u64, y: u64) -> u64 {
+    if x < y {
+        return x;
+    } else { 
+        return y; 
+    }
+}
+
+fn (lock Lock) intervals_passed(current_t: u64) -> u64{
+    require(current_t > lock.start_time, "bad")
+    let effective: u64 = min(current_t, lock.end_time);
+    return ((effective - lock.start_time) / lock.interval_seconds) + 1;
+}
+
+fn new_lock_id() -> u64 {
+    let storage: Storage = Storage::new();
+    let id: u64 = storage.load("lastLockId").expect("missingLastLockId");
+    id = id + 1;
+    storage.store("lastLockId", id);
+    return id;
+}
+
+fn now() -> u64 {
+    let block: Block = Block::current();
+    return block.timestamp();
+}
+
+entry lock_tokens(asset_hash: Hash, amount: u64, duration: u64, interval: u64) {
+    require(amount > 0, "amountMustBePositive");
+    require(duration > 0, "amountMustBePositive");
+    require(interval > 0, "amountMustBePositive");
+
+    let deposited: u64 = get_deposit_for_asset(asset_hash).expect("noDeposit");
+    require(deposited >= amount, "insufficientDeposit");
+
+    let caller: Address = get_caller().expect("noCaller");
+
+    let start_t: u64 = now();
+    let end_t: u64 = start_t + duration;
+
+    let final_interval: u64 = (interval > duration) ? duration : interval;
+
+    let total_intervals: u64 = ((end_t - start_t) / final_interval);
+    if ((end_t - start_t) % final_interval) != 0 {
+        total_intervals += 1;
+    }
+
+    let lock_id: u64 = new_lock_id();
+
+    let lock: Lock = Lock {
+        owner: caller,
+        asset_hash: asset_hash,
+        amount_total: amount,
+        amount_withdrawn: 0,
+        start_time: start_t,
+        end_time: end_t,
+        interval_seconds: final_interval,
+        total_intervals: total_intervals,
+        last_withdraw_time: start_t
+    };
+
+    let storage: Storage = Storage::new();
+    storage.store(lock_id, lock);
+
+    let user_locks: u64[] = storage.load(caller).unwrap_or([]);
+    user_locks.push(lock_id);
+    storage.store(caller, user_locks);
+
+    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lock_id));
+    return 0;
+}
+
+entry withdraw(lock_id: u64, amount: u64) {
+    require(amount > 0, "amountMustBePositive");
+
+    let caller: Address = get_caller().expect("noCaller");
+    let storage: Storage = Storage::new();
+    let lock: Lock = storage.load(lock_id).expect("lockNotFound");
+    require(lock.owner == caller, "notLockOwner");
+
+    let current_t: u64 = now();
+
+    let total_intervals: u64 = lock.total_intervals;
+    let intervals_passed: u64 = lock.intervals_passed(current_t);
+    let intervals_passed_clamped: u64 = (intervals_passed > total_intervals) ? total_intervals : intervals_passed;
+
+    require(total_intervals > 0, "invalidIntervalConfiguration");
+
+    let vested: u64 = ((lock.amount_total as u128) * (intervals_passed_clamped as u128) / (total_intervals as u128)) as u64;
+
+    let available: u64 = (vested > lock.amount_withdrawn) ? ( vested - lock.amount_withdrawn ) : 0;
+    require(available > 0, "nothingToWithdraw");
+
+    require(amount <= available, "withdrawAmountExceedsAvailable");
+
+    lock.amount_withdrawn = lock.amount_withdrawn + amount;
+    lock.last_withdraw_time = current_t;
+    storage.store(lock_id, lock);
+
+    transfer(caller, amount, lock.asset_hash);
+
+    if lock.amount_withdrawn >= lock.amount_total {
+        fire_event(3, (Transaction::current().expect("missingTransaction").hash(), lock_id));
+    } else {
+        fire_event(2, (Transaction::current().expect("missingTransaction").hash(), lock_id));
+    }
+
+    return 0;
+}
+
+entry constructor() {
+    let storage: Storage = Storage::new();
+    storage.store("lastLockId", 0);
+    let owner: Address = get_caller().expect("noCaller");
+    storage.store("owner", owner);
+    return 0;
+}
