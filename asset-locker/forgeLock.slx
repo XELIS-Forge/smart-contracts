@@ -37,13 +37,12 @@ fn now() -> u64 {
     return block.timestamp();
 }
 
-entry lock_tokens(asset_hash: Hash, amount: u64, duration: u64, interval: u64) {
-    require(amount > 0, "amountMustBePositive");
+entry lock_tokens(asset_hash: Hash, duration: u64, interval: u64) {
     require(duration > 0, "amountMustBePositive");
     require(interval > 0, "amountMustBePositive");
 
     let deposited: u64 = get_deposit_for_asset(asset_hash).expect("noDeposit");
-    require(deposited >= amount, "insufficientDeposit");
+    require(deposited > 0, "insufficientDeposit");
 
     let caller: Address = get_caller().expect("noCaller");
 
@@ -62,7 +61,7 @@ entry lock_tokens(asset_hash: Hash, amount: u64, duration: u64, interval: u64) {
     let lock: Lock = Lock {
         owner: caller,
         asset_hash: asset_hash,
-        amount_total: amount,
+        amount_total: deposited,
         amount_withdrawn: 0,
         start_time: start_t,
         end_time: end_t,
