@@ -1,3 +1,10 @@
+// ---------------------- CUSTOM TYPES ----------------------
+
+enum Receiver {
+    Contract { hash: Hash },
+    Address { address: Address }
+}
+
 struct MetaAsset {
     asset_id: u64,
     owner: optional<Address>,
@@ -9,6 +16,8 @@ struct Balance {
     asset: Hash,
     source: Address
 }
+
+// ---------------------- HELPER FUNCTIONS ----------------------
 
 fn (balance Balance) charge(cost: u64, payable: bool) {
     require(cost <= balance.balance, "balanceTooLow");
@@ -28,11 +37,6 @@ fn (balance Balance) refund() {
     }
 }
 
-enum Receiver {
-    Contract { hash: Hash },
-    Address { address: Address }
-}
-
 fn safe_transfer(to: Receiver, amount: u64, asset_hash: Hash) {
     match to {
         Receiver::Contract { hash }  => {transfer_contract(hash, amount, asset_hash);}
@@ -47,6 +51,22 @@ fn new_asset_id() -> u64 {
     asset_id = asset_id + 1;
     storage.store("lastAssetId", asset_id);
     return asset_id;
+}
+
+// ---------------------- INTERNAL FUNCTIONS ----------------------
+
+fn _mint(receiver: Receiver, asset_hash: Hash, amount: u64) {
+    let meta_asset: MetaAsset = Storage::new().load(asset_hash).expect("assetNotFound");
+    let source: Address = get_caller().expect("noCaller");
+    
+    require(source == meta_asset.owner.expect("assetOwnerNotSet"), "notAssetOwner");
+    let asset: Asset = Asset::get_by_id(meta_asset.asset_id).expect("assetNotFoundById");
+    require(asset.is_mintable(), "assetNotMintable");
+    
+    require((asset.get_supply() + amount) <= asset.get_max_supply().unwrap_or(u64::MAX), "mintOverMax");
+    
+    asset.mint(amount);
+    safe_transfer(receiver, amount, asset.get_hash());
 }
 
 fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
@@ -102,11 +122,7 @@ fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8,
     return;
 }
 
-entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
-    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller"); }
-    _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
-    return 0;
-}
+// ---------------------- PUB FN WRAPPERS ----------------------
 
 pub fn contract_deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller"); }
@@ -114,30 +130,24 @@ pub fn contract_deploy_asset(name: string, ticker: string, decimals: u8, supply:
     return;
 }
 
-fn _mint(receiver: Receiver, asset_hash: Hash, amount: u64) {
-    let meta_asset: MetaAsset = Storage::new().load(asset_hash).expect("assetNotFound");
-    let source: Address = get_caller().expect("noCaller");
-    
-    require(source == meta_asset.owner.expect("assetOwnerNotSet"), "notAssetOwner");
-    let asset: Asset = Asset::get_by_id(meta_asset.asset_id).expect("assetNotFoundById");
-    require(asset.is_mintable(), "assetNotMintable");
-    
-    require((asset.get_supply() + amount) <= asset.get_max_supply().unwrap_or(u64::MAX), "mintOverMax");
-    
-    asset.mint(amount);
-    safe_transfer(receiver, amount, asset.get_hash());
+pub fn contract_mint(asset_hash: Hash, amount: u64) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    _mint(receiver, asset_hash, amount);
+    return;
+}
+
+// ---------------------- ENTRIES ----------------------
+
+entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller"); }
+    _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
+    return 0;
 }
 
 entry mint(asset_hash: Hash, amount: u64) {
     let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") };
     _mint(receiver, asset_hash, amount);
     return 0;
-}
-
-pub fn contract_mint(asset_hash: Hash, amount: u64) {
-    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
-    _mint(receiver, asset_hash, amount);
-    return;
 }
 
 entry transfer_ownership(asset_hash: Hash, new_owner: Address) {
@@ -177,6 +187,8 @@ entry set_fee(new_fee: u64) {
     storage.store("fee", new_fee);
     return 0;
 }
+
+// ---------------------- CONSTRUCTOR ----------------------
 
 hook constructor() -> u64 {
     let storage: Storage = Storage::new();
