@@ -24,14 +24,6 @@ fn (lock Lock) intervals_passed(current_t: u64) -> u64{
     return ((effective - lock.start_time) / lock.interval_seconds) + 1;
 }
 
-fn new_lock_id() -> u64 {
-    let storage: Storage = Storage::new();
-    let id: u64 = storage.load("lastLockId").expect("missingLastLockId");
-    id = id + 1;
-    storage.store("lastLockId", id);
-    return id;
-}
-
 fn now() -> u64 {
     let block: Block = Block::current();
     return block.timestamp();
@@ -56,7 +48,7 @@ entry lock_tokens(asset_hash: Hash, duration: u64, interval: u64) {
         total_intervals += 1;
     }
 
-    let lock_id: u64 = new_lock_id();
+    let lock_id: Hash = Transaction::current().expect("missingTransaction").hash();
 
     let lock: Lock = Lock {
         owner: caller,
@@ -73,15 +65,15 @@ entry lock_tokens(asset_hash: Hash, duration: u64, interval: u64) {
     let storage: Storage = Storage::new();
     storage.store(lock_id, lock);
 
-    let user_locks: u64[] = storage.load(caller).unwrap_or([]);
+    let user_locks: Hash[] = storage.load(caller).unwrap_or([]);
     user_locks.push(lock_id);
     storage.store(caller, user_locks);
 
-    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lock_id));
+    fire_event(1, lock_id);
     return 0;
 }
 
-entry withdraw(lock_id: u64, amount: u64) {
+entry withdraw(lock_id: Hash, amount: u64) {
     require(amount > 0, "amountMustBePositive");
 
     let caller: Address = get_caller().expect("noCaller");
@@ -111,9 +103,9 @@ entry withdraw(lock_id: u64, amount: u64) {
     transfer(caller, amount, lock.asset_hash);
 
     if lock.amount_withdrawn >= lock.amount_total {
-        fire_event(3, (Transaction::current().expect("missingTransaction").hash(), lock_id));
+        fire_event(3, lock_id);
     } else {
-        fire_event(2, (Transaction::current().expect("missingTransaction").hash(), lock_id));
+        fire_event(2, lock_id);
     }
 
     return 0;
@@ -121,8 +113,5 @@ entry withdraw(lock_id: u64, amount: u64) {
 
 entry constructor() {
     let storage: Storage = Storage::new();
-    storage.store("lastLockId", 0);
-    let owner: Address = get_caller().expect("noCaller");
-    storage.store("owner", owner);
     return 0;
 }
