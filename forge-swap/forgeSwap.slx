@@ -28,6 +28,19 @@ fn xor_hash(a: Hash, b: Hash) -> Hash {
     return Hash::from_bytes(xor_bytes(a.to_bytes(), b.to_bytes()));
 }
 
+enum Receiver {
+    Contract { hash: Hash },
+    Address { address: Address }
+}
+
+fn safe_transfer(to: Receiver, amount: u64, asset_hash: Hash) {
+    match to {
+        Receiver::Contract { hash }  => {transfer_contract(hash, amount, asset_hash);}
+        Receiver::Address { address } => {transfer(address, amount, asset_hash)}
+    }
+    return;
+}
+
 fn new_asset_id() -> u64 {
     let storage: Storage = Storage::new();
     let asset_id: u64 = storage.load("lastAssetId").expect("missingLastAssetId");
@@ -134,7 +147,7 @@ fn calculate_liquidity(amount_a: u64, amount_b: u64, l_total_supply: u64, l_rese
     }
 }
 
-fn mint_liquidity(amount_a: u64, amount_b: u64, liquidity_token_hash: Hash) {
+fn mint_liquidity(receiver: Receiver, amount_a: u64, amount_b: u64, liquidity_token_hash: Hash) {
     let storage: Storage = Storage::new();
     let asset: Asset = Asset::get_by_hash(liquidity_token_hash).expect("noAsset");
     let l_total_supply: u64 = asset.get_supply();
@@ -150,7 +163,7 @@ fn mint_liquidity(amount_a: u64, amount_b: u64, liquidity_token_hash: Hash) {
     require(liquidity > 0, "insufficientLiquidityMinted");
     
     asset.mint(liquidity);
-    transfer(get_caller().expect("noCaller"), liquidity, liquidity_token_hash);
+    safe_transfer(receiver, liquidity, liquidity_token_hash)
 
     l_reserve_a = l_reserve_a + amount_a;
     l_reserve_b = l_reserve_b + amount_b;
@@ -176,11 +189,12 @@ fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, 
     return (numerator / denominator) as u64;
 }
 
-entry add_liquidity(token0_hash: Hash, token1_hash: Hash) {
+fn _add_liquidity(receiver: Receiver, token0_hash: Hash, token1_hash: Hash) {
     require(token0_hash != token1_hash, "duplicateTokenInput");
     let liquidity_token_optional: optional<Hash> = get_pair_asset(token0_hash, token1_hash);
     let liquidity_token_hash: Hash = Hash::zero();
     let xel_balance: optional<u64> = null;
+
     if liquidity_token_optional.is_none() {
         let xelis: Hash = Hash::zero();
         xel_balance = get_deposit_for_asset(xelis).expect("missingXelDeposit").checked_sub(100000000).expect("insufficientXelForPairCreation");
@@ -188,12 +202,31 @@ entry add_liquidity(token0_hash: Hash, token1_hash: Hash) {
     } else {
         liquidity_token_hash = liquidity_token_optional.expect("pairNotFound");
     }
+
     let (amount_a, amount_b): (u64, u64) = get_liquidity_amounts(liquidity_token_hash, xel_balance);
-    mint_liquidity(amount_a, amount_b, liquidity_token_hash);
+
+    match receiver {
+        Receiver::Contract { hash } => {
+            mint_liquidity(receiver, amount_a, amount_b, liquidity_token_hash);
+        },
+        Receiver::Address { address } => {
+            mint_liquidity(receiver, amount_a, amount_b, liquidity_token_hash);
+        }
+    }
+}
+
+entry add_liquidity(token0_hash: Hash, token1_hash: Hash) {
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") };
+    _add_liquidity(receiver, token0_hash, token1_hash);
     return 0;
 }
 
-entry remove_liquidity(liquidity_token_hash: Hash) {
+pub fn contract_add_liquidity(token0_hash: Hash, token1_hash: Hash) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    _add_liquidity(receiver, token0_hash, token1_hash);
+}
+
+fn _remove_liquidity(receiver: Receiver, liquidity_token_hash: Hash) {
     let storage: Storage = Storage::new();
     let liquidity: u64 = get_deposit_for_asset(liquidity_token_hash).expect("noDeposit");
     let l_total_supply: u64 = Asset::get_by_hash(liquidity_token_hash).expect("noAsset").get_supply();
@@ -217,24 +250,35 @@ entry remove_liquidity(liquidity_token_hash: Hash) {
     l_reserve_b = l_reserve_b - amount_b;
     lp_asset.reserves = {token_a: l_reserve_a, token_b: l_reserve_b};
     storage.store(liquidity_token_hash, lp_asset);
+    
+    safe_transfer(receiver, amount_a, token_a);
+    safe_transfer(receiver, amount_b, token_b);
 
-    let source: Address = get_caller().expect("noCaller");
-    transfer(source, amount_a, token_a);
-    transfer(source, amount_b, token_b);
     fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
+}
+
+entry remove_liquidity(liquidity_token_hash: Hash) {
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") };
+    _remove_liquidity(receiver, liquidity_token_hash);
     return 0;
 }
 
-entry swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
+pub fn contract_remove_liquidity(liquidity_token_hash: Hash) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    _remove_liquidity(receiver, liquidity_token_hash);
+}
+
+
+fn _swap(receiver: Receiver, token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
     let amount_in: u64 = get_deposit_for_asset(token_in_hash).expect("noDeposit");
     require(amount_in > 0, "noDeposit");
-    
+
     let storage: Storage = Storage::new();
     let lp_asset_hash: Hash = get_pair_asset(token_in_hash, token_out_hash).expect("noPairFound");
     let lp_asset: LPAsset = storage.load(lp_asset_hash).expect("noLPAsset");
     let l_reserve_in: u64 = lp_asset.reserves.get(token_in_hash).expect("noReserveIn");
     let l_reserve_out: u64 = lp_asset.reserves.get(token_out_hash).expect("noReserveOut");
-    
+
     let amount_out: u64 = calculate_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash);
 
     require(amount_out >= amount_out_min, "slippageExceeded");
@@ -244,12 +288,23 @@ entry swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
     l_reserve_in = l_reserve_in + amount_in;
     l_reserve_out = l_reserve_out - amount_out;
     lp_asset.reserves = {token_in_hash: l_reserve_in, token_out_hash: l_reserve_out};
-    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
     storage.store(lp_asset_hash, lp_asset);
+    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
 
-    transfer(get_caller().expect("noCaller"), amount_out, token_out_hash);
+    safe_transfer(receiver, amount_out, token_out_hash);
+}
+
+entry swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") };
+    _swap(receiver, token_in_hash, token_out_hash, amount_out_min);
     return 0;
 }
+
+pub fn contract_swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    _swap(receiver, token_in_hash, token_out_hash, amount_out_min);
+}
+
 
 hook constructor() -> u64 {
     let storage: Storage = Storage::new();

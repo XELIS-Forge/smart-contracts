@@ -28,9 +28,17 @@ fn (balance Balance) refund() {
     }
 }
 
-fn mint_and_transfer(asset: Asset, amount: u64, owner: Address, asset_hash: Hash) {
-    asset.mint(amount);
-    transfer(owner, amount, asset_hash);
+enum Receiver {
+    Contract { hash: Hash },
+    Address { address: Address }
+}
+
+fn safe_transfer(to: Receiver, amount: u64, asset_hash: Hash) {
+    match to {
+        Receiver::Contract { hash }  => {transfer_contract(hash, amount, asset_hash);}
+        Receiver::Address { address } => {transfer(address, amount, asset_hash)}
+    }
+    return;
 }
 
 fn new_asset_id() -> u64 {
@@ -41,7 +49,7 @@ fn new_asset_id() -> u64 {
     return asset_id;
 }
 
-entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
+fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
     let storage: Storage = Storage::new();
     let owner: Address = get_caller().expect("noCaller");
     let fee: u64 = storage.load("fee").expect("missingFee");
@@ -68,12 +76,16 @@ entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_
     let asset_hash: Hash = created_asset.get_hash();
      
     match max_supply_mode {
-        MaxSupplyMode::Fixed { max_supply }  => {transfer(owner, max_supply, asset_hash);}
+        MaxSupplyMode::Fixed { max_supply }  => {safe_transfer(receiver, max_supply, asset_hash);}
         MaxSupplyMode::Mintable { max_supply } => {
             require(supply <= max_supply, "mintOverMax");
-            mint_and_transfer(created_asset, supply, owner, asset_hash);
+            created_asset.mint(supply);
+            safe_transfer(receiver, supply, asset_hash);
         }
-        MaxSupplyMode::None => {mint_and_transfer(created_asset, supply, owner, asset_hash);}
+        MaxSupplyMode::None => {
+            created_asset.mint(supply);
+            safe_transfer(receiver, supply, asset_hash);
+        }
     }
     
     let meta_asset: MetaAsset = MetaAsset { 
@@ -87,10 +99,22 @@ entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_
     storage.store(asset_hash, meta_asset);
     fire_event(1, (Transaction::current().expect("missingTransaction").hash(), asset_hash));
     xel_balance.refund();
+    return;
+}
+
+entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller"); }
+    _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
     return 0;
 }
 
-entry mint(asset_hash: Hash, amount: u64) {
+pub fn contract_deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller"); }
+    _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
+    return;
+}
+
+fn _mint(receiver: Receiver, asset_hash: Hash, amount: u64) {
     let meta_asset: MetaAsset = Storage::new().load(asset_hash).expect("assetNotFound");
     let source: Address = get_caller().expect("noCaller");
     
@@ -101,8 +125,19 @@ entry mint(asset_hash: Hash, amount: u64) {
     require((asset.get_supply() + amount) <= asset.get_max_supply().unwrap_or(u64::MAX), "mintOverMax");
     
     asset.mint(amount);
-    transfer(source, amount, asset.get_hash());
+    safe_transfer(receiver, amount, asset.get_hash());
+}
+
+entry mint(asset_hash: Hash, amount: u64) {
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") };
+    _mint(receiver, asset_hash, amount);
     return 0;
+}
+
+pub fn contract_mint(asset_hash: Hash, amount: u64) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    _mint(receiver, asset_hash, amount);
+    return;
 }
 
 entry transfer_ownership(asset_hash: Hash, new_owner: Address) {
