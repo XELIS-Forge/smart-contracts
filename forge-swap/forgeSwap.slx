@@ -183,7 +183,7 @@ fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, 
     let storage: Storage = Storage::new();
 
     let dao_hash: Hash = Storage::new().load("DAOHash").expect("missingDAOHash");
-    let dao_contract: Module = Module::new(dao_hash).unwrap();
+    let dao_contract: Contract = Contract::new(dao_hash).unwrap();
     dao_contract.call(2, [token_in_hash], { token_in_hash: dev_fee });
 
     let amount_in_with_lp_fee: u128 = amount_in_with_dev_fee * (9978);
