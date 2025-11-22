@@ -34,6 +34,12 @@ fn xor_bytes(a: bytes, b: bytes) -> bytes {
 }
 
 fn xor_hash(a: Hash, b: Hash) -> Hash {
+    if a == Hash::zero() {
+        return b;
+    }
+    if b == Hash::zero() {
+        return a;
+    }
     return Hash::from_bytes(xor_bytes(a.to_bytes(), b.to_bytes()));
 }
 
@@ -85,7 +91,7 @@ fn create_pair(token_a_hash: Hash, token_b_hash: Hash) -> Hash {
 fn quote(amount_a: u64, reserve_a: u64, reserve_b: u64) -> u64 {
     require(amount_a > 0, "insufficientAmount");
     require(reserve_a > 0 && reserve_b > 0, "insufficientLiquidity");
-    let amount_b: u64 = amount_a * reserve_b / reserve_a;
+    let amount_b: u64 = (amount_a as u128 * reserve_b as u128 / reserve_a as u128) as u64;
     return amount_b;
 }
 
@@ -321,7 +327,7 @@ hook constructor() -> u64 {
     let storage: Storage = Storage::new();
     storage.store("lastAssetId", 0);
     let source: Address = get_caller().expect("noCaller");
-    storage.store("DAOHash", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));
+    storage.store("DAOHash", Hash::from_hex("5da87b59e87a8f909c5fb196ce8ad196b5b71bfafdb69e4d978dac514801c97d"));
     storage.store("owner", source);
     storage.store("feeAddress", source);
     return 0;
