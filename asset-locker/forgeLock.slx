@@ -19,9 +19,9 @@ fn min(x: u64, y: u64) -> u64 {
 }
 
 fn (lock Lock) intervals_passed(current_t: u64) -> u64{
-    require(current_t > lock.start_time, "bad")
+    require(current_t > lock.start_time, "lockNotStarted")
     let effective: u64 = min(current_t, lock.end_time);
-    return ((effective - lock.start_time) / lock.interval_seconds) + 1;
+    return ((effective - lock.start_time) / lock.interval_seconds);
 }
 
 fn now() -> u64 {
@@ -31,7 +31,7 @@ fn now() -> u64 {
 
 entry lock_tokens(asset_hash: Hash, duration: u64, interval: u64, owner: Address) {
     require(duration > 0, "amountMustBePositive");
-    require(interval > 0, "amountMustBePositive");
+    require(interval > 0, "intervalMustBePositive");
 
     let deposited: u64 = get_deposit_for_asset(asset_hash).expect("noDeposit");
     require(deposited > 0, "insufficientDeposit");

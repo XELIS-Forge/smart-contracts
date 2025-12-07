@@ -18,6 +18,7 @@ entry stake_tokens() {
 }
 
 entry unstake_tokens(amount: u64) {
+    require(amount > 0, "unstakeZero");
     let storage: Storage = Storage::new();
     let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
     let staker: Address = get_caller().expect("noCaller");
@@ -67,7 +68,9 @@ entry recover_asset(asset_hash: Hash) {
     let owner: Address = storage.load("contract_owner").expect("missingContractOwner");
     require(caller == owner, "notContractOwner");
 
-    transfer(caller, get_balance_for_asset(asset_hash), asset_hash);
+    let balance: u64 = get_balance_for_asset(asset_hash).expect("noBalance");
+    require(balance > 0, "noBalance");
+    transfer(caller, balance, asset_hash);
     return 0;
 }
 

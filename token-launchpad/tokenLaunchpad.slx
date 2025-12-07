@@ -84,7 +84,6 @@ fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8,
     xel_balance.charge(fee, true);
     
     let asset_id: u64 = new_asset_id();
-    let final_max_supply: u64 = 0;
     let asset: optional<Asset>;
 
     xel_balance.charge(100000000, false);
@@ -96,7 +95,7 @@ fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8,
     let asset_hash: Hash = created_asset.get_hash();
      
     match max_supply_mode {
-        MaxSupplyMode::Fixed { max_supply }  => {safe_transfer(receiver, max_supply, asset_hash);}
+        MaxSupplyMode::Fixed { max_supply }  => {safe_transfer(receiver, max_supply, asset_hash)}
         MaxSupplyMode::Mintable { max_supply } => {
             require(supply <= max_supply, "mintOverMax");
             created_asset.mint(supply);
@@ -114,8 +113,6 @@ fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8,
         icon: icon
     };
     
-    let source: Address = get_caller().expect("noCaller");
-    
     storage.store(asset_hash, meta_asset);
     fire_event(1, (Transaction::current().expect("missingTransaction").hash(), asset_hash));
     xel_balance.refund();
@@ -125,7 +122,7 @@ fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8,
 // ---------------------- PUB FN WRAPPERS ----------------------
 
 pub fn contract_deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
-    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller"); }
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") }
     _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
     return;
 }
@@ -139,7 +136,7 @@ pub fn contract_mint(asset_hash: Hash, amount: u64) {
 // ---------------------- ENTRIES ----------------------
 
 entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
-    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller"); }
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") }
     _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
     return 0;
 }
