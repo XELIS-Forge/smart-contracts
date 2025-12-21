@@ -69,7 +69,7 @@ fn _mint(receiver: Receiver, asset_hash: Hash, amount: u64) {
     safe_transfer(receiver, amount, asset.get_hash());
 }
 
-fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
+fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) -> Hash {
     let storage: Storage = Storage::new();
     let owner: Address = get_caller().expect("noCaller");
     let fee: u64 = storage.load("fee").expect("missingFee");
@@ -116,15 +116,15 @@ fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8,
     storage.store(asset_hash, meta_asset);
     fire_event(1, (Transaction::current().expect("missingTransaction").hash(), asset_hash));
     xel_balance.refund();
-    return;
+    return asset_hash;
 }
 
 // ---------------------- PUB FN WRAPPERS ----------------------
 
-pub fn contract_deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
+pub fn contract_deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) -> Hash {
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") }
-    _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
-    return;
+    let asset_hash: Hash = _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
+    return asset_hash;
 }
 
 pub fn contract_mint(asset_hash: Hash, amount: u64) {
@@ -182,6 +182,14 @@ entry set_fee(new_fee: u64) {
     let owner: Address = storage.load("owner").expect("missingContractOwner");
     require(get_caller().expect("noCaller") == owner, "notContractOwner");
     storage.store("fee", new_fee);
+    return 0;
+}
+
+entry set_dao_contract(dao_hash: Hash) {
+    let storage: Storage = Storage::new();
+    let owner: Address = storage.load("owner").expect("missingContractOwner");
+    require(get_caller().expect("noCaller") == owner, "notContractOwner");
+    storage.store("DAOHash", dao_hash);
     return 0;
 }
 
