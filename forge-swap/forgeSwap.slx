@@ -440,6 +440,13 @@ entry update_creator_fee_tiers(new_tiers: FeeTier[]) {
     return 0;
 }
 
+entry update_launchpad(launchpad: Hash) { // make this a hash array
+    let storage: Storage = Storage::new();
+    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    storage.store("launchpad", launchpad);
+    return 0;
+}
+
 // ---------------------- CONSTRUCTOR ----------------------
 
 hook constructor() -> u64 {
@@ -448,7 +455,7 @@ hook constructor() -> u64 {
     let source: Address = get_caller().expect("noCaller");
 
     let dao: DAO = DAO {
-    hash: Hash::from_hex("5da87b59e87a8f909c5fb196ce8ad196b5b71bfafdb69e4d978dac514801c97d"),
+    hash: Hash::from_hex("c6c37b6fdba051ee1e3ad6f79e04bdb8bdb072cfca0c57be1140887a528b9047"),
     entry: 2
     }
     let whitelist: Receiver[] = [Receiver::Contract { hash: dao.hash }]
