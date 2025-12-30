@@ -67,7 +67,7 @@ fn store_pair(token_a: Hash, token_b: Hash, lp_asset_hash: Hash) {
     let pair_key: string = "pairs_" + first.to_hex();
     let pair_map: map<Hash, Hash> = storage.load(pair_key).unwrap_or({});
     pair_map.insert(second, lp_asset_hash);
-    storage.store(first, pair_map);
+    storage.store(pair_key, pair_map);
 }
 
 fn load_pair(token_a: Hash, token_b: Hash) -> optional<Hash> {
@@ -217,7 +217,9 @@ fn creator_fee_multiplier_from_marketcap(marketcap: u64) -> u256 {
 }
 
 fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash, token_out_hash: Hash, creator: optional<Address>) -> (u64, u64) {
-    let amount_after_dev: u256 = (amount_in as u256) * (Storage::new().load("dev_fee").expect("noDevFee") as u256) / (100000000);
+    let storage: Storage = Storage::new();
+    let dev_fee_scaler: u256 = storage.load("dev_fee").expect("noDevFee")
+    let amount_after_dev: u256 = (amount_in as u256) * (dev_fee_scaler) / (100000000);
     let dev_fee: u64 = amount_in - amount_after_dev as u64;
     
     let amount_after_creator: u256 = amount_after_dev;
@@ -461,9 +463,9 @@ hook constructor() -> u64 {
     let whitelist: Receiver[] = [Receiver::Contract { hash: dao.hash }]
     storage.store("DAO", dao);
     storage.store("feelessWhitelist", whitelist);
-    storage.store("launchpad", Hash::from_hex("5da87b59e87a8f909c5fb196ce8ad196b5b71bfafdb69e4d978dac514801c97d"));
+    storage.store("launchpad", Hash::from_hex("c6c37b6fdba051ee1e3ad6f79e04bdb8bdb072cfca0c57be1140887a528b9047"));
     storage.store("owner", source);
-    storage.store("dev_fee", 99950000)
+    storage.store("dev_fee", 99950000 as u256)
     let default_tiers: FeeTier[] = [
         FeeTier { marketcap_threshold: 420, fee_multiplier: 99700000 },       // 0.3%
         FeeTier { marketcap_threshold: 1470, fee_multiplier: 99050000 },      // 0.95%
