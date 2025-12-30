@@ -1,153 +1,285 @@
-struct MetaAsset {
-    asset_id: u64,
-    owner: optional<Address>,
-    icon: string
+const NUM_BUCKETS: u64 = 1000;
+const LP_RESERVE_PERCENTAGE: u64 = 20;
+const PRICE_SCALE: u128 = 100000000;
+
+// ---------------------- TYPES ----------------------
+
+struct BondingCurve {
+    creator: Address,
+    total_supply: u64,
+    curve_tokens: u64,
+    lp_reserve: u64,
+    tokens_sold: u64,
+    xel_raised: u64,
+    xel_target: u64,
+    start_price: u128,
+    final_price: u128,
+    bucket_size: u64,
+    price_step: u128,
+    completed: bool
 }
 
-struct Balance {
-    balance: u64,
-    asset: Hash,
-    source: Address
+// ---------------------- HELPERS ----------------------
+
+fn min_u64(a: u64, b: u64) -> u64 {
+    if a < b { return a; } else { return b; }
 }
 
-fn (balance Balance) charge(cost: u64, payable: bool) {
-    require(cost <= balance.balance, "balanceTooLow");
+fn bucket_of(index: u64, bucket_size: u64) -> u64 {
+    return index / bucket_size;
+}
 
-    if (payable) {
-        let dao_hash: Hash = Storage::new().load("DAOHash").expect("missingDAOHash");
-        let dao_contract: Module = Module::new(dao_hash).unwrap();
-        dao_contract.call(2, [balance.asset], { balance.asset: cost });
+fn price_at(curve: BondingCurve, index: u64) -> u128 {
+    let bucket: u64 = bucket_of(index, curve.bucket_size);
+    return curve.start_price + (bucket as u128) * curve.price_step;
+}
+
+// ---------------------- CURVE MATH ----------------------
+
+fn calculate_buy(curve: BondingCurve, xel_budget: u64) -> (u64, u64, u64) {
+    let bought: u64 = 0;
+    let spent: u64 = 0;
+    let index: u64 = curve.tokens_sold;
+    let remaining: u64 = xel_budget;
+
+    while remaining > 0 && index < curve.curve_tokens {
+        let price: u128 = price_at(curve, index);
+        let bucket: u64 = bucket_of(index, curve.bucket_size);
+        let bucket_end: u64 =
+            min_u64((bucket + 1) * curve.bucket_size, curve.curve_tokens);
+
+        let available: u64 = bucket_end - index;
+        let max_buy: u64 = ((remaining as u128) * PRICE_SCALE / price) as u64;
+        if max_buy == 0 { break; }
+
+        let buy: u64 = min_u64(available, max_buy);
+        let cost: u64 = ((buy as u128) * price / PRICE_SCALE) as u64;
+
+        bought = bought + buy;
+        spent = spent + cost;
+        remaining = remaining - cost;
+        index = index + buy;
     }
 
-    balance.balance -= cost;
+    return (bought, spent, index);
 }
 
-fn (balance Balance) refund() {
-    if (balance.balance > 0) {
-        transfer(balance.source, balance.balance, balance.asset);
+fn calculate_sell(curve: BondingCurve, amount: u64) -> (u64, u64) {
+    let received: u64 = 0;
+    let index: u64 = curve.tokens_sold;
+    let remaining: u64 = amount;
+
+    while remaining > 0 && index > 0 {
+        index = index - 1;
+        let price: u128 = price_at(curve, index);
+        let value: u64 = (price / PRICE_SCALE) as u64;
+
+        received = received + value;
+        remaining = remaining - 1;
     }
+
+    return (received, index);
 }
 
-fn mint_and_transfer(asset: Asset, amount: u64, owner: Address, asset_hash: Hash) {
-    asset.mint(amount);
-    transfer(owner, amount, asset_hash);
-}
+// ---------------------- INTERNAL LOGIC ----------------------
 
-fn new_asset_id() -> u64 {
+fn _buy(token_hash: Hash, buyer: Address, xel_amount: u64) {
     let storage: Storage = Storage::new();
-    let asset_id: u64 = storage.load("lastAssetId").expect("missingLastAssetId");
-    asset_id = asset_id + 1;
-    storage.store("lastAssetId", asset_id);
-    return asset_id;
-}
-
-entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
-    let storage: Storage = Storage::new();
-    let owner: Address = get_caller().expect("noCaller");
-    let fee: u64 = storage.load("fee").expect("missingFee");
+    let curve: BondingCurve = storage.load(token_hash).expect("curveNotFound");
     let xelis: Hash = Hash::zero();
 
-    let xel_balance: Balance = Balance { 
-        balance: get_deposit_for_asset(xelis).expect("missingXelDeposit"), 
-        asset: xelis,
-        source: owner
-    };
-    
-    xel_balance.charge(fee, true);
-    
-    let asset_id: u64 = new_asset_id();
-    let final_max_supply: u64 = 0;
-    let asset: optional<Asset>;
+    require(!curve.completed, "curveCompleted");
+    require(xel_amount > 0, "zeroBuy");
 
-    xel_balance.charge(100000000, false);
-    
-    asset = Asset::create(asset_id, name, ticker, decimals, max_supply_mode);
-    
-    require(asset.is_some(), "assetNotCreated");
-    let created_asset: Asset = asset.expect("assetCreationFailed");
-    let asset_hash: Hash = created_asset.get_hash();
-     
-    match max_supply_mode {
-        MaxSupplyMode::Fixed { max_supply }  => {transfer(owner, max_supply, asset_hash);}
-        MaxSupplyMode::Mintable { max_supply } => {
-            require(supply <= max_supply, "mintOverMax");
-            mint_and_transfer(created_asset, supply, owner, asset_hash);
-        }
-        MaxSupplyMode::None => {mint_and_transfer(created_asset, supply, owner, asset_hash);}
+    let (tokens, spent, new_index): (u64, u64, u64) =
+        calculate_buy(curve, xel_amount);
+
+    require(tokens > 0, "insufficientXEL");
+
+    curve.tokens_sold = new_index;
+    curve.xel_raised = curve.xel_raised + spent;
+
+    if xel_amount > spent {
+        transfer(buyer, xel_amount - spent, xelis);
     }
-    
-    let meta_asset: MetaAsset = MetaAsset { 
-        asset_id: asset_id, 
-        owner: owner,
-        icon: icon
+
+    transfer(buyer, tokens, token_hash);
+
+    if curve.tokens_sold >= curve.curve_tokens {
+        curve.completed = true;
+
+        // contract_unlock_pair
+        // let swap_hash: Hash = storage.load("swap_contract").expect("noSwapContract");
+        // let swap: Contract = Contract::new(swap_hash).unwrap();
+        
+        // swap.call(
+        //     0,
+        //     [token_hash, xelis],
+        //     deposits
+        // );
+
+        // // contract_add_liquidity
+        // let deposits: map<Hash, u64> = {};
+        // deposits.insert(token_hash, curve.lp_reserve);
+        // deposits.insert(xelis, curve.xel_raised);
+
+        // swap.call(
+        //     0,
+        //     [token_hash, xelis],
+        //     deposits
+        // );
+
+        fire_event(2, (token_hash, curve.xel_raised));
+    }
+
+    storage.store(token_hash, curve);
+    fire_event(1, (token_hash, buyer, tokens, spent));
+}
+
+fn _sell(token_hash: Hash, seller: Address, amount: u64) {
+    let storage: Storage = Storage::new();
+    let curve: BondingCurve = storage.load(token_hash).expect("curveNotFound");
+    let xelis: Hash = Hash::zero();
+
+    require(!curve.completed, "useDEX");
+    require(amount > 0 && amount <= curve.tokens_sold, "invalidAmount");
+
+    let (xel, new_index): (u64, u64) = calculate_sell(curve, amount);
+    require(xel <= curve.xel_raised, "insufficientLiquidity");
+
+    curve.tokens_sold = new_index;
+    curve.xel_raised = curve.xel_raised - xel;
+
+    storage.store(token_hash, curve);
+    transfer(seller, xel, xelis);
+
+    fire_event(3, (token_hash, seller, amount, xel));
+}
+
+// ---------------------- ENTRIES ----------------------
+
+entry launch_token(
+    name: string,
+    ticker: string,
+    decimals: u8,
+    total_supply: u64,
+    xel_target: u64,
+    start_fraction: u64,
+    icon: string
+) {
+    let storage: Storage = Storage::new();
+    let creator: Address = get_caller().expect("noCaller");
+    let xelis: Hash = Hash::zero();
+
+    require(total_supply > 0, "badSupply");
+    require(xel_target > 0, "badTarget");
+    require(start_fraction > 0 && start_fraction <= PRICE_SCALE, "badStartFraction");
+
+    let deposit: u64 = get_deposit_for_asset(xelis).expect("noDeposit");
+
+    let lp_reserve: u64 = (total_supply * LP_RESERVE_PERCENTAGE) / 100;
+    let curve_tokens: u64 = total_supply - lp_reserve;
+    let bucket_size: u64 = curve_tokens / NUM_BUCKETS;
+    require(bucket_size > 0, "supplyTooSmall");
+
+    let final_price: u128 =
+        ((xel_target as u128) * PRICE_SCALE) / (lp_reserve as u128);
+    let start_price: u128 =
+        (final_price * (start_fraction as u128)) / PRICE_SCALE;
+    let price_step: u128 =
+        (final_price - start_price) / (NUM_BUCKETS as u128);
+        
+        
+    let launch_cost: u64 = storage.load("asset_factory_cost").expect("noAssetFactoryCost");
+    let asset_factory_hash: Hash =
+        storage.load("asset_factory").expect("noAssetFactory");
+    let asset_factory: Contract =
+        Contract::new(asset_factory_hash).unwrap();
+
+    let token_hash: Hash = asset_factory.call(
+        0,
+        [name, ticker, decimals, total_supply, MaxSupplyMode::Fixed{max_supply: total_supply}, icon],
+        { xelis: launch_cost } 
+    );
+
+    let curve: BondingCurve = BondingCurve {
+        creator,
+        total_supply,
+        curve_tokens,
+        lp_reserve,
+        tokens_sold: 0,
+        xel_raised: 0,
+        xel_target,
+        start_price,
+        final_price,
+        bucket_size,
+        price_step,
+        completed: false
     };
+
+    storage.store(token_hash, curve);
     
-    let source: Address = get_caller().expect("noCaller");
-    
-    storage.store(asset_hash, meta_asset);
-    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), asset_hash));
-    xel_balance.refund();
+    // contract_create_locked_pair
+    // let swap_hash: Hash = storage.load("swap_contract").expect("noSwapContract");
+    // let swap: Contract = Contract::new(swap_hash).unwrap();
+
+    // swap.call(
+    //     0,
+    //     [name, ticker, decimals, total_supply, 0, icon],
+    //     { xelis: PRICE_SCALE }
+    // );
+
+    fire_event(0, (token_hash, creator));
     return 0;
 }
 
-entry mint(asset_hash: Hash, amount: u64) {
-    let meta_asset: MetaAsset = Storage::new().load(asset_hash).expect("assetNotFound");
-    let source: Address = get_caller().expect("noCaller");
-    
-    require(source == meta_asset.owner.expect("assetOwnerNotSet"), "notAssetOwner");
-    let asset: Asset = Asset::get_by_id(meta_asset.asset_id).expect("assetNotFoundById");
-    require(asset.is_mintable(), "assetNotMintable");
-    
-    require((asset.get_supply() + amount) <= asset.get_max_supply().unwrap_or(u64::MAX), "mintOverMax");
-    
-    asset.mint(amount);
-    transfer(source, amount, asset.get_hash());
+entry buy(token_hash: Hash) {
+    let buyer: Address = get_caller().unwrap();
+    let amount: u64 = get_deposit_for_asset(Hash::zero()).expect("noXEL");
+    _buy(token_hash, buyer, amount);
     return 0;
 }
 
-entry transfer_ownership(asset_hash: Hash, new_owner: Address) {
-    let storage: Storage = Storage::new();
-    let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
-    require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
-    
-    meta_asset.owner = new_owner;
-    storage.store(asset_hash, meta_asset);
+entry sell(token_hash: Hash) {
+    let seller: Address = get_caller().unwrap();
+    let deposited: u64 = get_deposit_for_asset(token_hash).expect("noDeposit");
+    _sell(token_hash, seller, deposited);
     return 0;
 }
 
-entry renounce_ownership(asset_hash: Hash) {
-    let storage: Storage = Storage::new();
-    let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
-    require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
-    
-    meta_asset.owner = null;
-    storage.store(asset_hash, meta_asset);
-    return 0;
-}
-
-entry set_icon(asset_hash: Hash, new_icon: string) {
-    let storage: Storage = Storage::new();
-    let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
-    require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
-    
-    meta_asset.icon = new_icon;
-    storage.store(asset_hash, meta_asset);
-    return 0;
-}
-
-entry set_fee(new_fee: u64) {
+entry set_swap_contract(swap_hash: Hash) {
     let storage: Storage = Storage::new();
     let owner: Address = storage.load("owner").expect("missingContractOwner");
     require(get_caller().expect("noCaller") == owner, "notContractOwner");
-    storage.store("fee", new_fee);
+    storage.store("swap_contract", swap_hash);
     return 0;
 }
 
+entry set_factory_contract(factory_hash: Hash) {
+    let storage: Storage = Storage::new();
+    let owner: Address = storage.load("owner").expect("missingContractOwner");
+    require(get_caller().expect("noCaller") == owner, "notContractOwner");
+    storage.store("asset_factory", factory_hash);
+    return 0;
+}
+
+entry set_factory_cost(new_fee: u64) {
+    let storage: Storage = Storage::new();
+    let owner: Address = storage.load("owner").expect("missingContractOwner");
+    require(get_caller().expect("noCaller") == owner, "notContractOwner");
+    storage.store("asset_factory_cost", new_fee);
+    return 0;
+}
+
+// ---------------------- CONSTRUCTOR ----------------------
+
 hook constructor() -> u64 {
     let storage: Storage = Storage::new();
-    storage.store("lastAssetId", 0);
-    storage.store("owner", get_caller().expect("noCaller"));
-    storage.store("DAOHash", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));
-    storage.store("fee", 1 * 10 ** 8);
+    let deployer: Address = get_caller().unwrap();
+
+    storage.store("owner", deployer);
+    storage.store("asset_factory_cost", 1 * PRICE_SCALE);
+    storage.store("swap_contract", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));
+    storage.store("asset_factory", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));
     return 0;
 }

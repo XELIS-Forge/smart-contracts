@@ -1,9 +1,37 @@
 const MINIMUM_LIQUIDITY: u64 = 1000;
 
+// ---------------------- CUSTOM TYPES ----------------------
+
+enum Receiver {
+    Contract { hash: Hash },
+    Address { address: Address }
+}
+
 struct LPAsset {
     asset_id: u64,
-    reserves: map<Hash, u64>
+    reserves: map<Hash, u64>,
+    locked: bool,
+    creator: optional<Address>
 }
+
+struct DAO {
+    hash: Hash,
+    entry: u16
+}
+
+struct FeeTier {
+    marketcap_threshold: u64,
+    fee_multiplier: u256
+}
+
+// ---------------------- STRUCT METHODS ----------------------
+
+fn (dao DAO) charge(token: Hash, amount: u64) {
+    let dao_contract: Contract = Contract::new(dao.hash).unwrap();
+    dao_contract.call(dao.entry, [token], { token: amount });
+}
+
+// ---------------------- HELPER FUNCTIONS ----------------------
 
 fn min(x: u64, y: u64) -> u64 {
     if x < y {
@@ -13,19 +41,12 @@ fn min(x: u64, y: u64) -> u64 {
     }
 }
 
-fn xor_bytes(a: bytes, b: bytes) -> bytes {
-    let result: bytes = bytes::new();
-    require(a.len() == b.len(), "bytesNotEqualLength");
-
-    for i: u32 = 0; i < a.len(); i += 1 {
-        result.push(a[i] ^ b[i]);
+fn safe_transfer(to: Receiver, amount: u64, asset_hash: Hash) {
+    match to {
+        Receiver::Contract { hash }  => {transfer_contract(hash, amount, asset_hash);}
+        Receiver::Address { address } => {transfer(address, amount, asset_hash)}
     }
-
-    return result; 
-}
-
-fn xor_hash(a: Hash, b: Hash) -> Hash {
-    return Hash::from_bytes(xor_bytes(a.to_bytes(), b.to_bytes()));
+    return;
 }
 
 fn new_asset_id() -> u64 {
@@ -36,13 +57,32 @@ fn new_asset_id() -> u64 {
     return asset_id;
 }
 
-fn get_pair_asset(token_a_hash: Hash, token_b_hash: Hash) -> optional<Hash> {
+fn store_pair(token_a: Hash, token_b: Hash, lp_asset_hash: Hash) {
     let storage: Storage = Storage::new();
-    let lp_hash: optional<Hash> = storage.load(xor_hash(token_a_hash, token_b_hash));
-    return lp_hash;
+    let a_u256: u256 = token_a.to_u256();
+    let b_u256: u256 = token_b.to_u256();
+    
+    let (first, second) = a_u256 > b_u256 ? (token_a, token_b) : (token_b, token_a)
+    
+    let pair_key: string = "pairs_" + first.to_hex();
+    let pair_map: map<Hash, Hash> = storage.load(pair_key).unwrap_or({});
+    pair_map.insert(second, lp_asset_hash);
+    storage.store(pair_key, pair_map);
 }
 
-fn create_pair(token_a_hash: Hash, token_b_hash: Hash) -> Hash {
+fn load_pair(token_a: Hash, token_b: Hash) -> optional<Hash> {
+    let storage: Storage = Storage::new();
+    let a_u256: u256 = token_a.to_u256();
+    let b_u256: u256 = token_b.to_u256();
+    
+    let (first, second) = a_u256 > b_u256 ? (token_a, token_b) : (token_b, token_a)
+    
+    let pair_key: string = "pairs_" + first.to_hex();
+    let pair_map: optional<map<Hash, Hash>> = storage.load(pair_key);
+    return pair_map.is_some() ? pair_map.unwrap().get(second) : null;
+}
+
+fn create_pair(token_a_hash: Hash, token_b_hash: Hash, locked: bool) -> Hash {
     let storage: Storage = Storage::new();
     let asset_id: u64 = new_asset_id();
     let ticker_a: string = Asset::get_by_hash(token_a_hash).expect("tokenANotFound").get_ticker();
@@ -56,18 +96,20 @@ fn create_pair(token_a_hash: Hash, token_b_hash: Hash) -> Hash {
     
     let lp_asset: LPAsset = LPAsset { 
         asset_id: asset_id, 
-        reserves: {token_a_hash: 0, token_b_hash: 0}
+        reserves: {token_a_hash: 0, token_b_hash: 0},
+        locked: locked,
+        creator: locked ? get_caller().expect("noCaller") : null;
     };
     let lp_asset_hash: Hash = asset.get_hash();
     storage.store(lp_asset_hash, lp_asset);
-    storage.store(xor_hash(token_a_hash, token_b_hash), lp_asset_hash);
+    store_pair(token_a_hash, token_b_hash, lp_asset_hash);
     return lp_asset_hash;
 }
 
 fn quote(amount_a: u64, reserve_a: u64, reserve_b: u64) -> u64 {
     require(amount_a > 0, "insufficientAmount");
     require(reserve_a > 0 && reserve_b > 0, "insufficientLiquidity");
-    let amount_b: u64 = amount_a * reserve_b / reserve_a;
+    let amount_b: u64 = (amount_a as u128 * reserve_b as u128 / reserve_a as u128) as u64;
     return amount_b;
 }
 
@@ -134,7 +176,7 @@ fn calculate_liquidity(amount_a: u64, amount_b: u64, l_total_supply: u64, l_rese
     }
 }
 
-fn mint_liquidity(amount_a: u64, amount_b: u64, liquidity_token_hash: Hash) {
+fn mint_liquidity(receiver: Receiver, amount_a: u64, amount_b: u64, liquidity_token_hash: Hash) {
     let storage: Storage = Storage::new();
     let asset: Asset = Asset::get_by_hash(liquidity_token_hash).expect("noAsset");
     let l_total_supply: u64 = asset.get_supply();
@@ -150,7 +192,7 @@ fn mint_liquidity(amount_a: u64, amount_b: u64, liquidity_token_hash: Hash) {
     require(liquidity > 0, "insufficientLiquidityMinted");
     
     asset.mint(liquidity);
-    transfer(get_caller().expect("noCaller"), liquidity, liquidity_token_hash);
+    safe_transfer(receiver, liquidity, liquidity_token_hash);
 
     l_reserve_a = l_reserve_a + amount_a;
     l_reserve_b = l_reserve_b + amount_b;
@@ -159,46 +201,92 @@ fn mint_liquidity(amount_a: u64, amount_b: u64, liquidity_token_hash: Hash) {
     storage.store(liquidity_token_hash, lp_asset);
 }
 
-fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash) -> u64 {
-    let amount_in_with_dev_fee: u128 = (amount_in as u128) * (9997) / (10000);
-    let dev_fee: u64 = amount_in - amount_in_with_dev_fee as u64;
+fn creator_fee_multiplier_from_marketcap(marketcap: u64) -> u256 {
     let storage: Storage = Storage::new();
-
-    let dao_hash: Hash = Storage::new().load("DAOHash").expect("missingDAOHash");
-    let dao_contract: Module = Module::new(dao_hash).unwrap();
-    dao_contract.call(2, [token_in_hash], { token_in_hash: dev_fee });
-
-    let amount_in_with_lp_fee: u128 = amount_in_with_dev_fee * (9978);
-    let numerator: u128 = amount_in_with_lp_fee * (l_reserve_out as u128);
-    let denominator: u128 = (l_reserve_in as u128) * (10000) + (amount_in_with_lp_fee);
-
-    require(denominator > 0, "divisionByZero");
-    return (numerator / denominator) as u64;
+    let fee_tiers: FeeTier[] = storage.load("creatorFeeTiers").expect("noFeeTiers");
+    
+    let i: u32 = 0;
+    while i < fee_tiers.len() {
+        if marketcap <= fee_tiers[i].marketcap_threshold {
+            return fee_tiers[i].fee_multiplier;
+        }
+        i = i + 1;
+    }
+    
+    return fee_tiers[fee_tiers.len() - 1].fee_multiplier;
 }
 
-entry add_liquidity(token0_hash: Hash, token1_hash: Hash) {
+fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash, token_out_hash: Hash, creator: optional<Address>) -> (u64, u64) {
+    let storage: Storage = Storage::new();
+    let dev_fee_scaler: u256 = storage.load("dev_fee").expect("noDevFee")
+    let amount_after_dev: u256 = (amount_in as u256) * (dev_fee_scaler) / (100000000);
+    let dev_fee: u64 = amount_in - amount_after_dev as u64;
+    
+    let amount_after_creator: u256 = amount_after_dev;
+    if creator.is_some() {
+        // Determine which token is XEL and which is the other token
+        let (xel_reserve, token_reserve, token_hash) = token_in_hash == Hash::zero() ? (l_reserve_in, l_reserve_out, token_out_hash) : (l_reserve_out, l_reserve_in, token_in_hash)
+        // Calculate price: XEL per token (scaled by 1e8)
+        let price_per_token: u128 = (xel_reserve as u128) * (100000000) / (token_reserve as u128);
+        
+        // Get token supply
+        let token_supply: u64 = Asset::get_by_hash(token_hash).expect("tokenNotFound").get_supply();
+        
+        // Calculate market cap: (price * supply) / 1e8, result in XEL with 5 decimals
+        let marketcap: u64 = ((price_per_token * (token_supply as u128)) / (100000000 as u128)) as u64;
+        
+        // Apply dynamic creator fee based on market cap
+        amount_after_creator = amount_after_dev * creator_fee_multiplier_from_marketcap(marketcap) / (100000000 as u256);
+        let creator_fee: u64 = amount_after_dev as u64 - amount_after_creator as u64;
+        transfer(creator.unwrap(), creator_fee, token_in_hash);
+    }
+
+    let amount_after_lp: u256 = amount_after_creator * (99780000);
+    let numerator: u256 = amount_after_lp * (l_reserve_out as u256);
+    let denominator: u256 = (l_reserve_in as u256) * (100000000) + (amount_after_lp);
+
+    require(denominator > 0, "divisionByZero");
+    return ((numerator / denominator) as u64, dev_fee);
+}
+
+fn calculate_feeless_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash) -> (u64, u64) {
+    let numerator: u128 = amount_in as u128 * (l_reserve_out as u128);
+    let denominator: u128 = (l_reserve_in as u128) + (amount_in as u128);
+
+    require(denominator > 0, "divisionByZero");
+    return ((numerator / denominator) as u64, 0);
+}
+
+// ---------------------- INTERNAL FUNCTIONS ----------------------
+
+fn _add_liquidity(receiver: Receiver, token0_hash: Hash, token1_hash: Hash) {
     require(token0_hash != token1_hash, "duplicateTokenInput");
-    let liquidity_token_optional: optional<Hash> = get_pair_asset(token0_hash, token1_hash);
+    let storage: Storage = Storage::new();
+
+    let liquidity_token_optional: optional<Hash> = load_pair(token0_hash, token1_hash);
     let liquidity_token_hash: Hash = Hash::zero();
     let xel_balance: optional<u64> = null;
+
     if liquidity_token_optional.is_none() {
         let xelis: Hash = Hash::zero();
         xel_balance = get_deposit_for_asset(xelis).expect("missingXelDeposit").checked_sub(100000000).expect("insufficientXelForPairCreation");
-        liquidity_token_hash = create_pair(token0_hash, token1_hash);
+        liquidity_token_hash = create_pair(token0_hash, token1_hash, false);
     } else {
         liquidity_token_hash = liquidity_token_optional.expect("pairNotFound");
     }
+
     let (amount_a, amount_b): (u64, u64) = get_liquidity_amounts(liquidity_token_hash, xel_balance);
-    mint_liquidity(amount_a, amount_b, liquidity_token_hash);
-    return 0;
+
+    mint_liquidity(receiver, amount_a, amount_b, liquidity_token_hash);
 }
 
-entry remove_liquidity(liquidity_token_hash: Hash) {
+fn _remove_liquidity(receiver: Receiver, liquidity_token_hash: Hash) {
     let storage: Storage = Storage::new();
     let liquidity: u64 = get_deposit_for_asset(liquidity_token_hash).expect("noDeposit");
     let l_total_supply: u64 = Asset::get_by_hash(liquidity_token_hash).expect("noAsset").get_supply();
 
     let lp_asset: LPAsset = storage.load(liquidity_token_hash).expect("noLPAsset");
+    require(lp_asset.locked == false, "pairLocked");
     let token_hashes: Hash[] = lp_asset.reserves.keys();
     let token_a: Hash = token_hashes[0];
     let token_b: Hash = token_hashes[1];
@@ -217,25 +305,29 @@ entry remove_liquidity(liquidity_token_hash: Hash) {
     l_reserve_b = l_reserve_b - amount_b;
     lp_asset.reserves = {token_a: l_reserve_a, token_b: l_reserve_b};
     storage.store(liquidity_token_hash, lp_asset);
+    
+    safe_transfer(receiver, amount_a, token_a);
+    safe_transfer(receiver, amount_b, token_b);
 
-    let source: Address = get_caller().expect("noCaller");
-    transfer(source, amount_a, token_a);
-    transfer(source, amount_b, token_b);
     fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
-    return 0;
 }
 
-entry swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
+fn _swap(receiver: Receiver, token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64, feeless: bool) {
     let amount_in: u64 = get_deposit_for_asset(token_in_hash).expect("noDeposit");
     require(amount_in > 0, "noDeposit");
     
     let storage: Storage = Storage::new();
-    let lp_asset_hash: Hash = get_pair_asset(token_in_hash, token_out_hash).expect("noPairFound");
+    if feeless {
+        let whitelist: Receiver[] = storage.load("feelessWhitelist").expect("noWhitelist");
+        require(whitelist.contains(receiver), "notFeelessWhitelisted");
+    }
+    let lp_asset_hash: Hash = load_pair(token_in_hash, token_out_hash).expect("noPairFound");
     let lp_asset: LPAsset = storage.load(lp_asset_hash).expect("noLPAsset");
+    require(lp_asset.locked == false, "pairLocked");
     let l_reserve_in: u64 = lp_asset.reserves.get(token_in_hash).expect("noReserveIn");
     let l_reserve_out: u64 = lp_asset.reserves.get(token_out_hash).expect("noReserveOut");
-    
-    let amount_out: u64 = calculate_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash);
+
+    let (amount_out, dev_fee): (u64, u64) = feeless ? calculate_feeless_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash) : calculate_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash, token_out_hash, lp_asset.creator);
 
     require(amount_out >= amount_out_min, "slippageExceeded");
     require(amount_out > 0, "insufficientOutputAmount");
@@ -244,19 +336,163 @@ entry swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
     l_reserve_in = l_reserve_in + amount_in;
     l_reserve_out = l_reserve_out - amount_out;
     lp_asset.reserves = {token_in_hash: l_reserve_in, token_out_hash: l_reserve_out};
-    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
     storage.store(lp_asset_hash, lp_asset);
+    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
+    
+    if !feeless && dev_fee > 0 {
+        let dao: DAO = storage.load("DAO").expect("missingDAO");
+        dao.charge(token_in_hash, dev_fee);
+    }
+    safe_transfer(receiver, amount_out, token_out_hash);
+}
 
-    transfer(get_caller().expect("noCaller"), amount_out, token_out_hash);
+// ---------------------- PUB FN WRAPPERS ----------------------
+
+pub fn contract_add_liquidity(token0_hash: Hash, token1_hash: Hash) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    _add_liquidity(receiver, token0_hash, token1_hash);
+}
+
+pub fn contract_remove_liquidity(liquidity_token_hash: Hash) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    _remove_liquidity(receiver, liquidity_token_hash);
+}
+
+pub fn contract_swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    _swap(receiver, token_in_hash, token_out_hash, amount_out_min, false);
+}
+
+pub fn contract_feeless_swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    _swap(receiver, token_in_hash, token_out_hash, amount_out_min, true);
+}
+
+pub fn contract_create_locked_pair(token_in_hash: Hash, token_out_hash: Hash) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    let launchpad_hash: Hash = Storage::new().load("launchpad").expect("missingLaunchpadHash");
+    require(get_contract_caller().expect("noCaller") == launchpad_hash, "notLaunchpad");
+    create_pair(token_in_hash, token_out_hash, true);
+}
+
+pub fn contract_unlock_pair(lp_asset_hash: Hash) {
+    let storage: Storage = Storage::new();
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    let launchpad_hash: Hash = storage.load("launchpad").expect("missingLaunchpadHash");
+    require(get_contract_caller().expect("noCaller") == launchpad_hash, "notLaunchpad");
+    let lp_asset: LPAsset = storage.load(lp_asset_hash).expect("noLPAsset");
+    lp_asset.locked = false;
+    storage.store(lp_asset_hash, lp_asset);
+}
+
+// ---------------------- ENTRY WRAPPERS ----------------------
+
+entry add_liquidity(token0_hash: Hash, token1_hash: Hash) {
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") };
+    _add_liquidity(receiver, token0_hash, token1_hash);
     return 0;
 }
+
+entry remove_liquidity(liquidity_token_hash: Hash) {
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") };
+    _remove_liquidity(receiver, liquidity_token_hash);
+    return 0;
+}
+
+entry swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") };
+    _swap(receiver, token_in_hash, token_out_hash, amount_out_min, false);
+    return 0;
+}
+
+entry update_dao(new_dao: DAO) {
+    let storage: Storage = Storage::new();
+    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    let dao: DAO = storage.load("DAO").expect("missingDAO");
+    let receiver: Receiver = Receiver::Contract { hash: dao.hash };
+    let whitelist: Receiver[] = storage.load("feelessWhitelist").expect("noWhitelist");
+    whitelist.push(receiver);
+    storage.store("DAO", new_dao);
+    storage.store("feelessWhitelist", whitelist);
+    return 0;
+}
+
+entry update_dao_fee(fee: u64) {
+    let storage: Storage = Storage::new();
+    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    require(fee > 99800000, "feeTooLarge");
+    storage.store("dev_fee", fee)
+    return 0;
+}
+
+entry update_creator_fee_tiers(new_tiers: FeeTier[]) {
+    let storage: Storage = Storage::new();
+    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    require(new_tiers.len() > 0, "emptyTiers");
+    
+    require(new_tiers[0].fee_multiplier > 98000000, "feeTooLarge");
+    let i: u32 = 1;
+    while i < new_tiers.len() {
+        require(new_tiers[i].marketcap_threshold > new_tiers[i - 1].marketcap_threshold, "tiersNotAscending");
+        require(new_tiers[i].fee_multiplier > new_tiers[i - 1].fee_multiplier, "tiersNotAscending");
+        i = i + 1;
+    }
+    
+    storage.store("creatorFeeTiers", new_tiers);
+    return 0;
+}
+
+entry update_launchpad(launchpad: Hash) { // make this a hash array
+    let storage: Storage = Storage::new();
+    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    storage.store("launchpad", launchpad);
+    return 0;
+}
+
+// ---------------------- CONSTRUCTOR ----------------------
 
 hook constructor() -> u64 {
     let storage: Storage = Storage::new();
     storage.store("lastAssetId", 0);
     let source: Address = get_caller().expect("noCaller");
-    storage.store("DAOHash", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));
+
+    let dao: DAO = DAO {
+    hash: Hash::from_hex("c6c37b6fdba051ee1e3ad6f79e04bdb8bdb072cfca0c57be1140887a528b9047"),
+    entry: 2
+    }
+    let whitelist: Receiver[] = [Receiver::Contract { hash: dao.hash }]
+    storage.store("DAO", dao);
+    storage.store("feelessWhitelist", whitelist);
+    storage.store("launchpad", Hash::from_hex("c6c37b6fdba051ee1e3ad6f79e04bdb8bdb072cfca0c57be1140887a528b9047"));
     storage.store("owner", source);
-    storage.store("feeAddress", source);
+    storage.store("dev_fee", 99950000 as u256)
+    let default_tiers: FeeTier[] = [
+        FeeTier { marketcap_threshold: 420, fee_multiplier: 99700000 },       // 0.3%
+        FeeTier { marketcap_threshold: 1470, fee_multiplier: 99050000 },      // 0.95%
+        FeeTier { marketcap_threshold: 2460, fee_multiplier: 99100000 },      // 0.9%
+        FeeTier { marketcap_threshold: 3440, fee_multiplier: 99150000 },      // 0.85%
+        FeeTier { marketcap_threshold: 4420, fee_multiplier: 99200000 },      // 0.8%
+        FeeTier { marketcap_threshold: 9820, fee_multiplier: 99250000 },      // 0.75%
+        FeeTier { marketcap_threshold: 14740, fee_multiplier: 99300000 },     // 0.7%
+        FeeTier { marketcap_threshold: 19650, fee_multiplier: 99350000 },     // 0.65%
+        FeeTier { marketcap_threshold: 24560, fee_multiplier: 99400000 },     // 0.6%
+        FeeTier { marketcap_threshold: 29470, fee_multiplier: 99450000 },     // 0.55%
+        FeeTier { marketcap_threshold: 34380, fee_multiplier: 99500000 },     // 0.5%
+        FeeTier { marketcap_threshold: 39300, fee_multiplier: 99550000 },     // 0.45%
+        FeeTier { marketcap_threshold: 44210, fee_multiplier: 99600000 },     // 0.4%
+        FeeTier { marketcap_threshold: 49120, fee_multiplier: 99650000 },     // 0.35%
+        FeeTier { marketcap_threshold: 54030, fee_multiplier: 99700000 },     // 0.3%
+        FeeTier { marketcap_threshold: 58940, fee_multiplier: 99725000 },     // 0.275%
+        FeeTier { marketcap_threshold: 63860, fee_multiplier: 99750000 },     // 0.25%
+        FeeTier { marketcap_threshold: 68770, fee_multiplier: 99775000 },     // 0.225%
+        FeeTier { marketcap_threshold: 73681, fee_multiplier: 99800000 },     // 0.2%
+        FeeTier { marketcap_threshold: 78590, fee_multiplier: 99825000 },     // 0.175%
+        FeeTier { marketcap_threshold: 83500, fee_multiplier: 99850000 },     // 0.15%
+        FeeTier { marketcap_threshold: 88400, fee_multiplier: 99875000 },     // 0.125%
+        FeeTier { marketcap_threshold: 93330, fee_multiplier: 99900000 },     // 0.1%
+        FeeTier { marketcap_threshold: 98240, fee_multiplier: 99925000 },     // 0.075%
+        FeeTier { marketcap_threshold: 99999, fee_multiplier: 99950000 }      // 0.05% (max threshold)
+    ];
+    storage.store("creatorFeeTiers", default_tiers);
     return 0;
 }

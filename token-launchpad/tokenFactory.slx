@@ -1,0 +1,205 @@
+// ---------------------- CUSTOM TYPES ----------------------
+
+enum Receiver {
+    Contract { hash: Hash },
+    Address { address: Address }
+}
+
+struct MetaAsset {
+    asset_id: u64,
+    owner: optional<Address>,
+    icon: string
+}
+
+struct Balance {
+    balance: u64,
+    asset: Hash,
+    source: Address
+}
+
+// ---------------------- HELPER FUNCTIONS ----------------------
+
+fn (balance Balance) charge(cost: u64, payable: bool) {
+    require(cost <= balance.balance, "balanceTooLow");
+
+    if (payable) {
+        let dao_hash: Hash = Storage::new().load("DAOHash").expect("missingDAOHash");
+        let dao_contract: Contract = Contract::new(dao_hash).unwrap();
+        dao_contract.call(2, [balance.asset], { balance.asset: cost });
+    }
+
+    balance.balance -= cost;
+}
+
+fn (balance Balance) refund() {
+    if (balance.balance > 0) {
+        transfer(balance.source, balance.balance, balance.asset);
+    }
+}
+
+fn safe_transfer(to: Receiver, amount: u64, asset_hash: Hash) {
+    match to {
+        Receiver::Contract { hash }  => {transfer_contract(hash, amount, asset_hash);}
+        Receiver::Address { address } => {transfer(address, amount, asset_hash)}
+    }
+    return;
+}
+
+fn new_asset_id() -> u64 {
+    let storage: Storage = Storage::new();
+    let asset_id: u64 = storage.load("lastAssetId").expect("missingLastAssetId");
+    asset_id = asset_id + 1;
+    storage.store("lastAssetId", asset_id);
+    return asset_id;
+}
+
+// ---------------------- INTERNAL FUNCTIONS ----------------------
+
+fn _mint(receiver: Receiver, asset_hash: Hash, amount: u64) {
+    let meta_asset: MetaAsset = Storage::new().load(asset_hash).expect("assetNotFound");
+    let source: Address = get_caller().expect("noCaller");
+    
+    require(source == meta_asset.owner.expect("assetOwnerNotSet"), "notAssetOwner");
+    let asset: Asset = Asset::get_by_id(meta_asset.asset_id).expect("assetNotFoundById");
+    require(asset.is_mintable(), "assetNotMintable");
+    
+    require((asset.get_supply() + amount) <= asset.get_max_supply().unwrap_or(u64::MAX), "mintOverMax");
+    
+    asset.mint(amount);
+    safe_transfer(receiver, amount, asset.get_hash());
+}
+
+fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) -> Hash {
+    let storage: Storage = Storage::new();
+    let owner: Address = get_caller().expect("noCaller");
+    let fee: u64 = storage.load("fee").expect("missingFee");
+    let xelis: Hash = Hash::zero();
+
+    let xel_balance: Balance = Balance { 
+        balance: get_deposit_for_asset(xelis).expect("missingXelDeposit"), 
+        asset: xelis,
+        source: owner
+    };
+    
+    xel_balance.charge(fee, true);
+    
+    let asset_id: u64 = new_asset_id();
+    let asset: optional<Asset>;
+
+    xel_balance.charge(100000000, false);
+    
+    asset = Asset::create(asset_id, name, ticker, decimals, max_supply_mode);
+    
+    require(asset.is_some(), "assetNotCreated");
+    let created_asset: Asset = asset.expect("assetCreationFailed");
+    let asset_hash: Hash = created_asset.get_hash();
+     
+    match max_supply_mode {
+        MaxSupplyMode::Fixed { max_supply }  => {safe_transfer(receiver, max_supply, asset_hash)}
+        MaxSupplyMode::Mintable { max_supply } => {
+            require(supply <= max_supply, "mintOverMax");
+            created_asset.mint(supply);
+            safe_transfer(receiver, supply, asset_hash);
+        }
+        MaxSupplyMode::None => {
+            created_asset.mint(supply);
+            safe_transfer(receiver, supply, asset_hash);
+        }
+    }
+    
+    let meta_asset: MetaAsset = MetaAsset { 
+        asset_id: asset_id, 
+        owner: owner,
+        icon: icon
+    };
+    
+    storage.store(asset_hash, meta_asset);
+    fire_event(1, (Transaction::current().expect("missingTransaction").hash(), asset_hash));
+    xel_balance.refund();
+    return asset_hash;
+}
+
+// ---------------------- PUB FN WRAPPERS ----------------------
+
+pub fn contract_deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) -> Hash {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") }
+    let asset_hash: Hash = _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
+    return asset_hash;
+}
+
+pub fn contract_mint(asset_hash: Hash, amount: u64) {
+    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
+    _mint(receiver, asset_hash, amount);
+    return;
+}
+
+// ---------------------- ENTRIES ----------------------
+
+entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") }
+    _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
+    return 0;
+}
+
+entry mint(asset_hash: Hash, amount: u64) {
+    let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") };
+    _mint(receiver, asset_hash, amount);
+    return 0;
+}
+
+entry transfer_ownership(asset_hash: Hash, new_owner: Address) {
+    let storage: Storage = Storage::new();
+    let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
+    require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
+    
+    meta_asset.owner = new_owner;
+    storage.store(asset_hash, meta_asset);
+    return 0;
+}
+
+entry renounce_ownership(asset_hash: Hash) {
+    let storage: Storage = Storage::new();
+    let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
+    require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
+    
+    meta_asset.owner = null;
+    storage.store(asset_hash, meta_asset);
+    return 0;
+}
+
+entry set_icon(asset_hash: Hash, new_icon: string) {
+    let storage: Storage = Storage::new();
+    let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
+    require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
+    
+    meta_asset.icon = new_icon;
+    storage.store(asset_hash, meta_asset);
+    return 0;
+}
+
+entry set_fee(new_fee: u64) {
+    let storage: Storage = Storage::new();
+    let owner: Address = storage.load("owner").expect("missingContractOwner");
+    require(get_caller().expect("noCaller") == owner, "notContractOwner");
+    storage.store("fee", new_fee);
+    return 0;
+}
+
+entry set_dao_contract(dao_hash: Hash) {
+    let storage: Storage = Storage::new();
+    let owner: Address = storage.load("owner").expect("missingContractOwner");
+    require(get_caller().expect("noCaller") == owner, "notContractOwner");
+    storage.store("DAOHash", dao_hash);
+    return 0;
+}
+
+// ---------------------- CONSTRUCTOR ----------------------
+
+hook constructor() -> u64 {
+    let storage: Storage = Storage::new();
+    storage.store("lastAssetId", 0);
+    storage.store("owner", get_caller().expect("noCaller"));
+    storage.store("DAOHash", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));
+    storage.store("fee", 1 * 10 ** 8);
+    return 0;
+}
