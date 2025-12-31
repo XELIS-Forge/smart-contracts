@@ -57,7 +57,7 @@ Centralized fee management contract for collecting and distributing protocol fee
 - [XELIS Documentation](https://docs.xelis.io/)
 - [XELIS Blockchain Repository](https://github.com/xelis-project/xelis-blockchain)
 - [XELIS Virtual Machine](https://github.com/xelis-project/xelis-vm)
-- [Silex Language Documentation](https://docs.xelis.io/)
+- [Silex Language Documentation](https://docs.xelis.io/features/smart-contracts/silex)
 - [XELIS Forge Platform](https://xelisforge.app/)
 
 ## License
