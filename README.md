@@ -70,7 +70,7 @@ These smart contracts are provided as-is. Always conduct thorough testing and au
 
 ## Contact & Community
 
-- **Website:** [@XelisForge](https://xelisforge.app/)
+- **Website:** [XelisForge.app](https://xelisforge.app/)
 - **Twitter:** [@XelisForge](https://x.com/XelisForge)
 - **Discord:** [Xelis Forge](https://discord.gg/49fk8U64Qm)
 - **GitHub:** [XELIS-Forge](https://github.com/XELIS-Forge)
