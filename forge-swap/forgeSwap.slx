@@ -219,7 +219,7 @@ fn creator_fee_multiplier_from_marketcap(marketcap: u64) -> u256 {
 fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash, token_out_hash: Hash, creator: optional<Address>) -> (u64, u64, u64) {
     let storage: Storage = Storage::new();
     let dev_fee_scaler: u256 = storage.load("dev_fee").expect("noDevFee")
-    let amount_after_dev: u256 = (amount_in as u256) * (dev_fee_scaler) / (100000000);
+    let amount_after_dev: u256 = (amount_in as u256) * (dev_fee_scaler) / (100000000u256);
     let dev_fee: u64 = amount_in - amount_after_dev as u64;
     
     let amount_after_creator: u256 = amount_after_dev;
@@ -227,16 +227,16 @@ fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, 
         // Determine which token is XEL and which is the other token
         let (xel_reserve, token_reserve, token_hash) = token_in_hash == Hash::zero() ? (l_reserve_in, l_reserve_out, token_out_hash) : (l_reserve_out, l_reserve_in, token_in_hash)
         // Calculate price: XEL per token (scaled by 1e8)
-        let price_per_token: u128 = (xel_reserve as u128) * (100000000) / (token_reserve as u128);
+        let price_per_token: u128 = (xel_reserve as u128) * (100000000u128) / (token_reserve as u128);
         
         // Get token supply
         let token_supply: u64 = Asset::get_by_hash(token_hash).expect("tokenNotFound").get_supply();
         
         // Calculate market cap: (price * supply) / 1e8, result in XEL with 5 decimals
-        let marketcap: u64 = ((price_per_token * (token_supply as u128)) / (100000000 as u128)) as u64;
+        let marketcap: u64 = ((price_per_token * (token_supply as u128)) / (100000000u128)) as u64;
         
         // Apply dynamic creator fee based on market cap
-        amount_after_creator = amount_after_dev * creator_fee_multiplier_from_marketcap(marketcap) / (100000000 as u256);
+        amount_after_creator = amount_after_dev * creator_fee_multiplier_from_marketcap(marketcap) / (100000000u256);
         let creator_fee: u64 = amount_after_dev as u64 - amount_after_creator as u64;
         transfer(creator.unwrap(), creator_fee, token_in_hash);
     }
