@@ -216,7 +216,7 @@ fn creator_fee_multiplier_from_marketcap(marketcap: u64) -> u256 {
     return fee_tiers[fee_tiers.len() - 1].fee_multiplier;
 }
 
-fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash, token_out_hash: Hash, creator: optional<Address>) -> (u64, u64) {
+fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash, token_out_hash: Hash, creator: optional<Address>) -> (u64, u64, u64) {
     let storage: Storage = Storage::new();
     let dev_fee_scaler: u256 = storage.load("dev_fee").expect("noDevFee")
     let amount_after_dev: u256 = (amount_in as u256) * (dev_fee_scaler) / (100000000);
@@ -246,15 +246,15 @@ fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, 
     let denominator: u256 = (l_reserve_in as u256) + (amount_after_lp);
 
     require(denominator > 0, "divisionByZero");
-    return ((numerator / denominator) as u64, dev_fee);
+    return (amount_after_creator as u64, (numerator / denominator) as u64, dev_fee);
 }
 
-fn calculate_feeless_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash) -> (u64, u64) {
+fn calculate_feeless_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash) -> (u64, u64, u64) {
     let numerator: u128 = amount_in as u128 * (l_reserve_out as u128);
     let denominator: u128 = (l_reserve_in as u128) + (amount_in as u128);
 
     require(denominator > 0, "divisionByZero");
-    return ((numerator / denominator) as u64, 0);
+    return (amount_in , (numerator / denominator) as u64, 0);
 }
 
 // ---------------------- INTERNAL FUNCTIONS ----------------------
@@ -327,13 +327,13 @@ fn _swap(receiver: Receiver, token_in_hash: Hash, token_out_hash: Hash, amount_o
     let l_reserve_in: u64 = lp_asset.reserves.get(token_in_hash).expect("noReserveIn");
     let l_reserve_out: u64 = lp_asset.reserves.get(token_out_hash).expect("noReserveOut");
 
-    let (amount_out, dev_fee): (u64, u64) = feeless ? calculate_feeless_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash) : calculate_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash, token_out_hash, lp_asset.creator);
+    let (lp_amount_in, amount_out, dev_fee): (u64, u64, u64) = feeless ? calculate_feeless_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash) : calculate_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash, token_out_hash, lp_asset.creator);
 
     require(amount_out >= amount_out_min, "slippageExceeded");
     require(amount_out > 0, "insufficientOutputAmount");
     require(amount_out < l_reserve_out, "insufficientLiquidity");
 
-    l_reserve_in = l_reserve_in + amount_in;
+    l_reserve_in = l_reserve_in + lp_amount_in;
     l_reserve_out = l_reserve_out - amount_out;
     lp_asset.reserves = {token_in_hash: l_reserve_in, token_out_hash: l_reserve_out};
     storage.store(lp_asset_hash, lp_asset);
