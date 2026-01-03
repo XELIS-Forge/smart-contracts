@@ -196,7 +196,8 @@ fn mint_liquidity(receiver: Receiver, amount_a: u64, amount_b: u64, liquidity_to
 
     l_reserve_a = l_reserve_a + amount_a;
     l_reserve_b = l_reserve_b + amount_b;
-    lp_asset.reserves = {token_a: l_reserve_a, token_b: l_reserve_b};
+    lp_asset.reserves.insert(token_a, l_reserve_a);
+    lp_asset.reserves.insert(token_b, l_reserve_b);
     fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
     storage.store(liquidity_token_hash, lp_asset);
     return liquidity;
@@ -305,7 +306,8 @@ fn _remove_liquidity(receiver: Receiver, liquidity_token_hash: Hash) -> map<Hash
 
     l_reserve_a = l_reserve_a - amount_a;
     l_reserve_b = l_reserve_b - amount_b;
-    lp_asset.reserves = {token_a: l_reserve_a, token_b: l_reserve_b};
+    lp_asset.reserves.insert(token_a, l_reserve_a);
+    lp_asset.reserves.insert(token_b, l_reserve_b);
     storage.store(liquidity_token_hash, lp_asset);
     
     safe_transfer(receiver, amount_a, token_a);
@@ -338,7 +340,8 @@ fn _swap(receiver: Receiver, token_in_hash: Hash, token_out_hash: Hash, amount_o
 
     l_reserve_in = l_reserve_in + lp_amount_in;
     l_reserve_out = l_reserve_out - amount_out;
-    lp_asset.reserves = {token_in_hash: l_reserve_in, token_out_hash: l_reserve_out};
+    lp_asset.reserves.insert(token_in_hash, l_reserve_in);
+    lp_asset.reserves.insert(token_out_hash, l_reserve_out);
     storage.store(lp_asset_hash, lp_asset);
     fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
     
