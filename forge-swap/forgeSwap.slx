@@ -352,7 +352,8 @@ fn _swap(receiver: Receiver, token_in_hash: Hash, token_out_hash: Hash, amount_o
 
 // ---------------------- PUB FN WRAPPERS ----------------------
 
-pub fn contract_add_liquidity(token0_hash: Hash, token1_hash: Hash) -> u64 {
+pub fn contract_add_liquidity(args: (Hash, Hash)) -> u64 {
+    let (token0_hash, token1_hash): (Hash, Hash) = args;
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
     let liquidity: u64 = _add_liquidity(receiver, token0_hash, token1_hash);
     return liquidity;
@@ -364,19 +365,22 @@ pub fn contract_remove_liquidity(liquidity_token_hash: Hash) -> map<Hash, u64> {
     return assets;
 }
 
-pub fn contract_swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) -> u64 {
+pub fn contract_swap(args: (Hash, Hash, u64)) -> u64 {
+    let (token_in_hash, token_out_hash, amount_out_min): (Hash, Hash, u64) = args;
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
     let amount_out: u64 = _swap(receiver, token_in_hash, token_out_hash, amount_out_min, false); 
     return amount_out;
 }
 
-pub fn contract_feeless_swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) -> u64 {
+pub fn contract_feeless_swap(args: (Hash, Hash, u64)) -> u64 {
+    let (token_in_hash, token_out_hash, amount_out_min): (Hash, Hash, u64) = args;
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
     let amount_out: u64 = _swap(receiver, token_in_hash, token_out_hash, amount_out_min, true); 
     return amount_out;
 }
 
-pub fn contract_create_locked_pair(token_in_hash: Hash, token_out_hash: Hash) {
+pub fn contract_create_locked_pair(args: (Hash, Hash)) {
+    let (token_in_hash, token_out_hash): (Hash, Hash) = args;
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
     let launchpad_hash: Hash = Storage::new().load("launchpad").expect("missingLaunchpadHash");
     require(get_contract_caller().expect("noCaller") == launchpad_hash, "notLaunchpad");
