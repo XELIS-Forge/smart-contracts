@@ -260,6 +260,8 @@ fn calculate_feeless_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_ou
 // ---------------------- INTERNAL FUNCTIONS ----------------------
 
 fn _add_liquidity(receiver: Receiver, token0_hash: Hash, token1_hash: Hash) -> u64 {
+    let depositsCount = get_deposits().len()
+    require((depositsCount == 2 || depositsCount == 3), "incorrectNumDeposits")
     require(token0_hash != token1_hash, "duplicateTokenInput");
     let storage: Storage = Storage::new();
 
@@ -284,6 +286,7 @@ fn _add_liquidity(receiver: Receiver, token0_hash: Hash, token1_hash: Hash) -> u
 }
 
 fn _remove_liquidity(receiver: Receiver, liquidity_token_hash: Hash) -> map<Hash, u64> {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let liquidity: u64 = get_deposit_for_asset(liquidity_token_hash).expect("noDeposit");
     let l_total_supply: u64 = Asset::get_by_hash(liquidity_token_hash).expect("noAsset").get_supply();
@@ -318,6 +321,7 @@ fn _remove_liquidity(receiver: Receiver, liquidity_token_hash: Hash) -> map<Hash
 }
 
 fn _swap(receiver: Receiver, token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64, feeless: bool) -> u64 {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let amount_in: u64 = get_deposit_for_asset(token_in_hash).expect("noDeposit");
     require(amount_in > 0, "noDeposit");
     
