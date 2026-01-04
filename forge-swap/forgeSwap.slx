@@ -138,17 +138,18 @@ fn get_liquidity_amounts(liquidity_token_hash: Hash, xel_balance: optional<u64>)
     let token_b: Hash = token_hashes[1];
     let amount_a_in: u64 = 0;
     let amount_b_in: u64 = 0;
-    if (xel_balance.is_some()) {
-        if (Hash::zero() == token_a) {
+    let a_is_xel: bool = token_a == Hash::zero();
+    let b_is_xel: bool = token_b == Hash::zero();
+
+    if (xel_balance.is_some() && (a_is_xel || b_is_xel)) {
+        if (a_is_xel) {
             amount_a_in = xel_balance.unwrap();
             amount_b_in = get_deposit_for_asset(token_b).expect("noTokenBDeposit");
-        }
-        if (Hash::zero() == token_b) {
-            amount_a_in = get_deposit_for_asset(token_a).expect("noTokenBDeposit");
+        } else {
+            amount_a_in = get_deposit_for_asset(token_a).expect("noTokenADeposit");
             amount_b_in = xel_balance.unwrap();
         }
-    }
-    else {
+    } else {
         amount_a_in = get_deposit_for_asset(token_a).expect("noTokenADeposit");
         amount_b_in = get_deposit_for_asset(token_b).expect("noTokenBDeposit");
     }
@@ -278,6 +279,8 @@ fn _add_liquidity(receiver: Receiver, token0_hash: Hash, token1_hash: Hash) -> u
     }
 
     let (amount_a, amount_b): (u64, u64) = get_liquidity_amounts(liquidity_token_hash, xel_balance);
+    require(amount_a > 1000, "toLittleInput")
+    require(amount_b > 1000, "toLittleInput")
 
     let liquidity: u64 = mint_liquidity(receiver, amount_a, amount_b, liquidity_token_hash);
     return liquidity;
