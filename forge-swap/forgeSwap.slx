@@ -80,7 +80,7 @@ fn create_pair(token_a_hash: Hash, token_b_hash: Hash, locked: bool) -> Hash {
     let ticker_a: string = Asset::get_by_hash(token_a_hash).expect("tokenANotFound").get_ticker();
     let ticker_b: string = Asset::get_by_hash(token_b_hash).expect("tokenBNotFound").get_ticker();
     let name: string = ticker_a + " " + ticker_b + " LP"; 
-    let ticker: string = "FORGE LP";
+    let ticker: string = "FORGELP";
     let decimals: u8 = 8; 
     let asset: optional<Asset> = Asset::create(asset_id, name, ticker, decimals, MaxSupplyMode::None);
     require(asset.is_some(), "assetNotCreated");
@@ -513,7 +513,7 @@ hook constructor() -> u64 {
     let source: Address = get_caller().expect("noCaller");
 
     let dao: DAO = DAO {
-    hash: Hash::from_hex("aef9ef4689b46ec4bd663ba0e57659a56f79dc58e88e23c721666e8891251c13"),
+    hash: Hash::from_hex("df3d247c86c3efb003e10bb9c3dc19d8354a7c67a914ecf464a465580484bb76"),
     entry: 2
     }
     let whitelist: Receiver[] = [Receiver::Contract { hash: dao.hash }]
