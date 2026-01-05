@@ -211,7 +211,6 @@ hook constructor() -> u64 {
     storage.store("stake_ledger", empty_stake_ledger);
     storage.store("total_staked", 0);
     storage.store("contract_owner", deployer);
-    let dex_hash: Hash = Hash::from_hex("c9d93c6b59f075156ce002470e34207089e3dfa76832460115c5be8f244ebfd5");
 
     return 0;
 }
