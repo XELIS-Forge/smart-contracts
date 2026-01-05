@@ -388,18 +388,23 @@ pub fn contract_feeless_swap(args: (Hash, Hash, u64)) -> u64 {
 
 pub fn contract_create_locked_pair(args: (Hash, Hash)) -> Hash {
     let (token_in_hash, token_out_hash): (Hash, Hash) = args;
-    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
-    let launchpad_hash: Hash = Storage::new().load("launchpad").expect("missingLaunchpadHash");
-    require(get_contract_caller().expect("noCaller") == launchpad_hash, "notLaunchpad");
+    let storage: Storage = Storage::new();
+    let caller: Hash = get_contract_caller().expect("noCaller")
+    let launchpads: Hash[] = storage.load("launchpads").unwrap_or([]);
+    require( launchpads.contains(caller), "notLaunchpad");
+    let receiver: Receiver = Receiver::Contract { hash: caller };
+
     let lp_asset_hash: Hash = create_pair(token_in_hash, token_out_hash, true);
     return lp_asset_hash
 }
 
 pub fn contract_unlock_pair(lp_asset_hash: Hash) {
     let storage: Storage = Storage::new();
-    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
-    let launchpad_hash: Hash = storage.load("launchpad").expect("missingLaunchpadHash");
-    require(get_contract_caller().expect("noCaller") == launchpad_hash, "notLaunchpad");
+    let caller: Hash =  get_contract_caller().expect("noCaller")
+    let launchpads: Hash[] = storage.load("launchpads").unwrap_or([]);
+    require( launchpads.contains(caller), "notLaunchpad");
+    let receiver: Receiver = Receiver::Contract { hash: caller };
+
     let lp_asset: LPAsset = storage.load(lp_asset_hash).expect("noLPAsset");
     lp_asset.locked = false;
     storage.store(lp_asset_hash, lp_asset);
@@ -462,12 +467,50 @@ entry update_creator_fee_tiers(new_tiers: FeeTier[]) {
     return 0;
 }
 
-entry update_launchpad(launchpad: Hash) { // make this a hash array
+entry add_launchpad(launchpad: Hash) {
     let storage: Storage = Storage::new();
     require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
-    storage.store("launchpad", launchpad);
+    let launchpads: Hash[] = storage.load("launchpads").unwrap_or([]);
+    require(!launchpads.contains(launchpad), "alreadyExists");
+    launchpads.push(launchpad);
+    storage.store("launchpads", launchpads);
     return 0;
 }
+
+entry remove_launchpad(launchpad: Hash) {
+    let storage: Storage = Storage::new();
+    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    let launchpads: Hash[] = storage.load("launchpads").expect("noLaunchpads");
+    let idx: optional<u32> = launchpads.index_of(launchpad);
+    require(idx.is_some(), "notLaunchpad");
+    launchpads.remove(idx.unwrap());
+    storage.store("launchpads", launchpads);
+    return 0;
+}
+
+entry remove_feeless_whitelist(contract_hash: Hash) {
+    let storage: Storage = Storage::new();
+    require(
+        get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"),
+        "notContractOwner"
+    );
+
+    let dao: DAO = storage.load("DAO").expect("missingDAO");
+    require(contract_hash != dao.hash, "cannotRemoveDAO");
+
+    let whitelist: Receiver[] = storage.load("feelessWhitelist").expect("noWhitelist");
+
+    let target: Receiver = Receiver::Contract { hash: contract_hash };
+    require(whitelist.contains(target), "notWhitelisted");
+
+    let idx: optional<u32> = whitelist.index_of(target);
+    require(idx.is_some(), "notWhitelisted");
+
+    whitelist.remove(idx.unwrap());
+    storage.store("feelessWhitelist", whitelist);
+    return 0;
+}
+
 
 // ---------------------- CONSTRUCTOR ----------------------
 
@@ -481,9 +524,9 @@ hook constructor() -> u64 {
     entry: 2
     }
     let whitelist: Receiver[] = [Receiver::Contract { hash: dao.hash }]
+
     storage.store("DAO", dao);
     storage.store("feelessWhitelist", whitelist);
-    storage.store("launchpad", Hash::from_hex("c6c37b6fdba051ee1e3ad6f79e04bdb8bdb072cfca0c57be1140887a528b9047"));
     storage.store("owner", source);
     storage.store("dev_fee", 99950000 as u256)
     let default_tiers: FeeTier[] = [
