@@ -17,6 +17,7 @@ fn swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64, amount_i
 } 
 
 entry stake_tokens() {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
     let deposit_amount: u64 = get_deposit_for_asset(dao_hash).expect("missingDaoDeposit");
@@ -36,6 +37,7 @@ entry stake_tokens() {
 }
 
 entry unstake_tokens(amount: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     require(amount > 0, "unstakeZero");
     let storage: Storage = Storage::new();
     let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
@@ -61,6 +63,7 @@ entry unstake_tokens(amount: u64) {
 }
 
 pub fn distribute_fee(asset_hash: Hash) {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
 
     let fee_deposit: u64 = get_deposit_for_asset(asset_hash).expect("missingFeeDeposit");
@@ -98,6 +101,7 @@ pub fn distribute_fee(asset_hash: Hash) {
 }
 
 entry recover_asset(asset_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
     require(asset_hash != dao_hash, "assetCannotBeDAO");
@@ -113,6 +117,7 @@ entry recover_asset(asset_hash: Hash) {
 }
 
 entry update_dex_hash(new_dex_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
 
     let caller: Address = get_caller().expect("noCaller");

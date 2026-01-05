@@ -56,6 +56,7 @@ fn new_asset_id() -> u64 {
 // ---------------------- INTERNAL FUNCTIONS ----------------------
 
 fn _mint(receiver: Receiver, asset_hash: Hash, amount: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let meta_asset: MetaAsset = Storage::new().load(asset_hash).expect("assetNotFound");
     let source: Address = get_caller().expect("noCaller");
     
@@ -70,6 +71,7 @@ fn _mint(receiver: Receiver, asset_hash: Hash, amount: u64) {
 }
 
 fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) -> Hash {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let owner: Address = get_caller().expect("noCaller");
     let fee: u64 = storage.load("fee").expect("missingFee");
@@ -148,6 +150,7 @@ entry mint(asset_hash: Hash, amount: u64) {
 }
 
 entry transfer_ownership(asset_hash: Hash, new_owner: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
     require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
@@ -158,6 +161,7 @@ entry transfer_ownership(asset_hash: Hash, new_owner: Address) {
 }
 
 entry renounce_ownership(asset_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
     require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
@@ -168,6 +172,7 @@ entry renounce_ownership(asset_hash: Hash) {
 }
 
 entry set_icon(asset_hash: Hash, new_icon: string) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
     require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
@@ -178,6 +183,7 @@ entry set_icon(asset_hash: Hash, new_icon: string) {
 }
 
 entry set_fee(new_fee: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let owner: Address = storage.load("owner").expect("missingContractOwner");
     require(get_caller().expect("noCaller") == owner, "notContractOwner");
@@ -186,6 +192,7 @@ entry set_fee(new_fee: u64) {
 }
 
 entry set_dao_contract(dao_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let owner: Address = storage.load("owner").expect("missingContractOwner");
     require(get_caller().expect("noCaller") == owner, "notContractOwner");

@@ -30,6 +30,7 @@ fn now() -> u64 {
 }
 
 entry lock_tokens(asset_hash: Hash, duration: u64, interval: u64, owner: Address) {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     require(duration > 0, "amountMustBePositive");
     require(interval > 0, "intervalMustBePositive");
 
@@ -72,6 +73,7 @@ entry lock_tokens(asset_hash: Hash, duration: u64, interval: u64, owner: Address
 }
 
 entry withdraw(lock_id: Hash, amount: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     require(amount > 0, "amountMustBePositive");
 
     let caller: Address = get_caller().expect("noCaller");
