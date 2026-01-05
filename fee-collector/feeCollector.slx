@@ -16,52 +16,6 @@ fn swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64, amount_i
     return amount_out
 } 
 
-entry stake_tokens() {
-    require(get_deposits().len() == 1, "incorrectNumDeposits")
-    let storage: Storage = Storage::new();
-    let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
-    let deposit_amount: u64 = get_deposit_for_asset(dao_hash).expect("missingDaoDeposit");
-
-    let staker: Address = get_caller().expect("noCaller");
-    let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
-
-    let current_stake: u64 = stake_ledger.get(staker).unwrap_or(0);
-    let updated_stake: u64 = current_stake + deposit_amount;
-    stake_ledger.insert(staker, updated_stake);
-
-    storage.store("stake_ledger", stake_ledger);
-
-    let total_staked: u64 = storage.load("total_staked").unwrap_or(0);
-    storage.store("total_staked", total_staked + deposit_amount);
-    return 0;
-}
-
-entry unstake_tokens(amount: u64) {
-    require(get_deposits().len() == 0, "incorrectNumDeposits")
-    require(amount > 0, "unstakeZero");
-    let storage: Storage = Storage::new();
-    let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
-    let staker: Address = get_caller().expect("noCaller");
-
-    let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
-    let staked_amount: u64 = stake_ledger.get(staker).unwrap_or(0);
-    require(staked_amount >= amount, "unstakeTooHigh");
-    
-    let total_staked: u64 = storage.load("total_staked").expect("missingTotalStaked");
-    storage.store("total_staked", total_staked - amount);
-    
-    if staked_amount == amount {
-        stake_ledger.swap_remove(staker);
-    } else {
-        stake_ledger.insert(staker, staked_amount - amount);
-    }
-
-    storage.store("stake_ledger", stake_ledger);
-
-    transfer(staker, amount, dao_hash);
-    return 0;
-}
-
 pub fn distribute_fee(asset_hash: Hash) {
     require(get_deposits().len() == 1, "incorrectNumDeposits")
 
@@ -143,6 +97,51 @@ pub fn distribute_fee(asset_hash: Hash) {
     }
 }
 
+entry stake_tokens() {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
+    let storage: Storage = Storage::new();
+    let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
+    let deposit_amount: u64 = get_deposit_for_asset(dao_hash).expect("missingDaoDeposit");
+
+    let staker: Address = get_caller().expect("noCaller");
+    let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
+
+    let current_stake: u64 = stake_ledger.get(staker).unwrap_or(0);
+    let updated_stake: u64 = current_stake + deposit_amount;
+    stake_ledger.insert(staker, updated_stake);
+
+    storage.store("stake_ledger", stake_ledger);
+
+    let total_staked: u64 = storage.load("total_staked").unwrap_or(0);
+    storage.store("total_staked", total_staked + deposit_amount);
+    return 0;
+}
+
+entry unstake_tokens(amount: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
+    require(amount > 0, "unstakeZero");
+    let storage: Storage = Storage::new();
+    let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
+    let staker: Address = get_caller().expect("noCaller");
+
+    let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
+    let staked_amount: u64 = stake_ledger.get(staker).unwrap_or(0);
+    require(staked_amount >= amount, "unstakeTooHigh");
+    
+    let total_staked: u64 = storage.load("total_staked").expect("missingTotalStaked");
+    storage.store("total_staked", total_staked - amount);
+    
+    if staked_amount == amount {
+        stake_ledger.swap_remove(staker);
+    } else {
+        stake_ledger.insert(staker, staked_amount - amount);
+    }
+
+    storage.store("stake_ledger", stake_ledger);
+
+    transfer(staker, amount, dao_hash);
+    return 0;
+}
 
 entry recover_asset(asset_hash: Hash) {
     require(get_deposits().len() == 0, "incorrectNumDeposits")
