@@ -167,6 +167,7 @@ entry launch_token(
     start_fraction: u64,
     icon: string
 ) {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let creator: Address = get_caller().expect("noCaller");
     let xelis: Hash = Hash::zero();
@@ -234,6 +235,7 @@ entry launch_token(
 }
 
 entry buy(token_hash: Hash) {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let buyer: Address = get_caller().unwrap();
     let amount: u64 = get_deposit_for_asset(Hash::zero()).expect("noXEL");
     _buy(token_hash, buyer, amount);
@@ -241,6 +243,7 @@ entry buy(token_hash: Hash) {
 }
 
 entry sell(token_hash: Hash) {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let seller: Address = get_caller().unwrap();
     let deposited: u64 = get_deposit_for_asset(token_hash).expect("noDeposit");
     _sell(token_hash, seller, deposited);
@@ -248,6 +251,7 @@ entry sell(token_hash: Hash) {
 }
 
 entry set_swap_contract(swap_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let owner: Address = storage.load("owner").expect("missingContractOwner");
     require(get_caller().expect("noCaller") == owner, "notContractOwner");
@@ -256,6 +260,7 @@ entry set_swap_contract(swap_hash: Hash) {
 }
 
 entry set_factory_contract(factory_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let owner: Address = storage.load("owner").expect("missingContractOwner");
     require(get_caller().expect("noCaller") == owner, "notContractOwner");
@@ -264,6 +269,7 @@ entry set_factory_contract(factory_hash: Hash) {
 }
 
 entry set_factory_cost(new_fee: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let owner: Address = storage.load("owner").expect("missingContractOwner");
     require(get_caller().expect("noCaller") == owner, "notContractOwner");
