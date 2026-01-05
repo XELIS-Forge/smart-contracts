@@ -338,7 +338,7 @@ fn _swap(receiver: Receiver, token_in_hash: Hash, token_out_hash: Hash, amount_o
     storage.store(lp_asset_hash, lp_asset);
     fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
     
-    if !feeless && dev_fee > 0 {
+    if (!feeless) && dev_fee > 0 {
         let dao: DAO = storage.load("DAO").expect("missingDAO");
         dao.charge(token_in_hash, dev_fee);
     }
