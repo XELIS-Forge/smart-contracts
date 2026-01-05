@@ -387,6 +387,7 @@ pub fn contract_feeless_swap(args: (Hash, Hash, u64)) -> u64 {
 }
 
 pub fn contract_create_locked_pair(args: (Hash, Hash)) -> Hash {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let (token_in_hash, token_out_hash): (Hash, Hash) = args;
     let storage: Storage = Storage::new();
     let caller: Hash = get_contract_caller().expect("noCaller")
@@ -399,6 +400,7 @@ pub fn contract_create_locked_pair(args: (Hash, Hash)) -> Hash {
 }
 
 pub fn contract_unlock_pair(lp_asset_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let caller: Hash =  get_contract_caller().expect("noCaller")
     let launchpads: Hash[] = storage.load("launchpads").unwrap_or([]);
@@ -431,6 +433,7 @@ entry swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
 }
 
 entry update_dao(new_dao: DAO) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
     let dao: DAO = storage.load("DAO").expect("missingDAO");
@@ -443,6 +446,7 @@ entry update_dao(new_dao: DAO) {
 }
 
 entry update_dao_fee(fee: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
     require(fee > 99800000, "feeTooLarge");
@@ -451,6 +455,7 @@ entry update_dao_fee(fee: u64) {
 }
 
 entry update_creator_fee_tiers(new_tiers: FeeTier[]) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
     require(new_tiers.len() > 0, "emptyTiers");
@@ -468,6 +473,7 @@ entry update_creator_fee_tiers(new_tiers: FeeTier[]) {
 }
 
 entry add_launchpad(launchpad: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
     let launchpads: Hash[] = storage.load("launchpads").unwrap_or([]);
@@ -478,6 +484,7 @@ entry add_launchpad(launchpad: Hash) {
 }
 
 entry remove_launchpad(launchpad: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
     let launchpads: Hash[] = storage.load("launchpads").expect("noLaunchpads");
@@ -489,6 +496,7 @@ entry remove_launchpad(launchpad: Hash) {
 }
 
 entry remove_feeless_whitelist(contract_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     require(
         get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"),
