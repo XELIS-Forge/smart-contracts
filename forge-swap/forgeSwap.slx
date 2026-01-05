@@ -33,14 +33,6 @@ fn (dao DAO) charge(token: Hash, amount: u64) {
 
 // ---------------------- HELPER FUNCTIONS ----------------------
 
-fn min(x: u64, y: u64) -> u64 {
-    if x < y {
-        return x;
-    } else { 
-        return y; 
-    }
-}
-
 fn safe_transfer(to: Receiver, amount: u64, asset_hash: Hash) {
     match to {
         Receiver::Contract { hash }  => {transfer_contract(hash, amount, asset_hash);}
@@ -167,10 +159,7 @@ fn calculate_liquidity(amount_a: u64, amount_b: u64, l_total_supply: u64, l_rese
         let liquidity: u64 = (((amount_a as u128) * (amount_b as u128)).sqrt() as u64) - (MINIMUM_LIQUIDITY);
         return liquidity;
     } else {
-        return min(
-            (((amount_a as u128) * (l_total_supply as u128) / (l_reserve_a as u128)) as u64), 
-            (((amount_b as u128) * (l_total_supply as u128) / (l_reserve_b as u128)) as u64)
-        );
+        return (((amount_a as u128) * (l_total_supply as u128) / (l_reserve_a as u128)) as u64).min((((amount_b as u128) * (l_total_supply as u128) / (l_reserve_b as u128)) as u64))
     }
 }
 
