@@ -27,7 +27,7 @@ pub fn distribute_fee(asset_hash: Hash) {
     let stake_ledger: map<Address, u64> =
         storage.load("stake_ledger").expect("missingStakeLedger");
 
-    let xel_hash: Hash = storage.load("xel_token").expect("missingXELToken");
+    let xel_hash: Hash = Hash::zero();
     let dex_hash: Hash = storage.load("dex_hash").expect("missingDexHash");
 
     let burn_token: optional<Hash> = storage.load("burn_token");
