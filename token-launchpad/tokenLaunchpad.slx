@@ -21,10 +21,6 @@ struct BondingCurve {
 
 // ---------------------- HELPERS ----------------------
 
-fn min_u64(a: u64, b: u64) -> u64 {
-    if a < b { return a; } else { return b; }
-}
-
 fn bucket_of(index: u64, bucket_size: u64) -> u64 {
     return index / bucket_size;
 }
@@ -46,13 +42,13 @@ fn calculate_buy(curve: BondingCurve, xel_budget: u64) -> (u64, u64, u64) {
         let price: u128 = price_at(curve, index);
         let bucket: u64 = bucket_of(index, curve.bucket_size);
         let bucket_end: u64 =
-            min_u64((bucket + 1) * curve.bucket_size, curve.curve_tokens);
+            curve.curve_tokens.min((bucket + 1) * curve.bucket_size);
 
         let available: u64 = bucket_end - index;
         let max_buy: u64 = ((remaining as u128) * PRICE_SCALE / price) as u64;
         if max_buy == 0 { break; }
 
-        let buy: u64 = min_u64(available, max_buy);
+        let buy: u64 = max_buy.min(available);
         let cost: u64 = ((buy as u128) * price / PRICE_SCALE) as u64;
 
         bought = bought + buy;
