@@ -513,7 +513,7 @@ hook constructor() -> u64 {
     let source: Address = get_caller().expect("noCaller");
 
     let dao: DAO = DAO {
-    hash: Hash::from_hex("df3d247c86c3efb003e10bb9c3dc19d8354a7c67a914ecf464a465580484bb76"),
+    hash: Hash::from_hex("d83211562707405e06af2cc758c18b2d21b68deabcb3cf781686acf86a825c04"),
     entry: 2
     }
     let whitelist: Receiver[] = [Receiver::Contract { hash: dao.hash }]
