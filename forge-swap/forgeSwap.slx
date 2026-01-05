@@ -386,12 +386,13 @@ pub fn contract_feeless_swap(args: (Hash, Hash, u64)) -> u64 {
     return amount_out;
 }
 
-pub fn contract_create_locked_pair(args: (Hash, Hash)) {
+pub fn contract_create_locked_pair(args: (Hash, Hash)) -> Hash {
     let (token_in_hash, token_out_hash): (Hash, Hash) = args;
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
     let launchpad_hash: Hash = Storage::new().load("launchpad").expect("missingLaunchpadHash");
     require(get_contract_caller().expect("noCaller") == launchpad_hash, "notLaunchpad");
-    create_pair(token_in_hash, token_out_hash, true);
+    let lp_asset_hash: Hash = create_pair(token_in_hash, token_out_hash, true);
+    return lp_asset_hash
 }
 
 pub fn contract_unlock_pair(lp_asset_hash: Hash) {
