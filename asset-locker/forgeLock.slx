@@ -10,17 +10,9 @@ struct Lock {
     last_withdraw_time: u64
 }
 
-fn min(x: u64, y: u64) -> u64 {
-    if x < y {
-        return x;
-    } else { 
-        return y; 
-    }
-}
-
 fn (lock Lock) intervals_passed(current_t: u64) -> u64{
     require(current_t > lock.start_time, "lockNotStarted")
-    let effective: u64 = min(current_t, lock.end_time);
+    let effective: u64 = current_t.min(lock.end_time);
     return ((effective - lock.start_time) / lock.interval_seconds);
 }
 
