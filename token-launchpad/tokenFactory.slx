@@ -253,7 +253,7 @@ hook constructor() -> u64 {
     storage.store("lastAssetId", 0);
     let owners: Address[] = [get_caller().expect("noCaller")];
     storage.store("owners", owners);
-    storage.store("dao_hash", Hash::from_hex("d83211562707405e06af2cc758c18b2d21b68deabcb3cf781686acf86a825c04"));
+    storage.store("dao_hash", Hash::from_hex("8699aacb5385cf77fce6a9b204b52655a98da4524fb9591623e29d086545b538"));
     storage.store("dao_entry", 3u16);
     storage.store("fee", 1 * 10 ** 8);
     return 0;

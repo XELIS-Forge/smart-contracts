@@ -251,7 +251,7 @@ hook constructor() -> u64 {
     
     let empty_stake_ledger: map<Address, u64> = {};
     
-    storage.store("dex_hash", Hash::from_hex("d83211562707405e06af2cc758c18b2d21b68deabcb3cf781686acf86a825c04"));
+    storage.store("dex_hash", Hash::from_hex("0cd544f8f37ad23eb6cc1d397775e63ccc099a4eb305d84eb09424aa2a16fb6a"));
     storage.store("dex_entry", 21u16);
     storage.store("dao_token", dao_hash);
     storage.store("stake_ledger", empty_stake_ledger);
