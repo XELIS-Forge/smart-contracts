@@ -31,10 +31,11 @@ pub fn distribute_fee(asset_hash: Hash) {
     let storage: Storage = Storage::new();
     let fee_deposit: u64 = get_deposit_for_asset(asset_hash).expect("missingFeeDeposit");
     let total_staked: u64 = storage.load("total_staked").expect("missingTotalStaked");
-    require(total_staked > 0, "noStakers");
+    if total_staked == 0 {
+        return
+    }
 
-    let stake_ledger: map<Address, u64> =
-        storage.load("stake_ledger").expect("missingStakeLedger");
+    let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
 
     let xel_hash: Hash = Hash::zero();
     let dex_hash: Hash = storage.load("dex_hash").expect("missingDexHash");
@@ -48,49 +49,48 @@ pub fn distribute_fee(asset_hash: Hash) {
         let burn_hash: Hash = burn_token.unwrap();
         let burn_part: u64 = (fee_deposit as u128 * 3000000000u128 / 10000000000u128) as u64;
         let remaining: u64 = fee_deposit - burn_part;
-
+        
         if asset_hash == burn_hash {
-            let burn_amount: u64 = burn_part;
-            let swap_amount: u64 = remaining;
-
-            if burn_amount > 0 {
-                burn(burn_amount, burn_hash)
+            if burn_part > 0 {
+                burn(burn_part, burn_hash);
             }
 
-            if swap_amount > 0 && check_pair(burn_hash, xel_hash, dex_hash) {
-                let swapped: u64 = swap(burn_hash, xel_hash, 0, swap_amount);
+            if remaining > 0 {
+                let swapped: u64 = swap(burn_hash, xel_hash, 0, remaining);
                 distribute_asset = xel_hash;
                 distribute_amount = swapped;
             } else {
-                distribute_amount = 0;
+                return
             }
         }
         else {
-            if burn_part > 0
-                && check_pair(asset_hash, xel_hash, dex_hash)
-                && check_pair(xel_hash, burn_hash, dex_hash)
-            {
-                let xel_out: u64 = swap(asset_hash, xel_hash, 0, burn_part);
-                let burn_out: u64 = swap(xel_hash, burn_hash, 0, xel_out);
-                if burn_out > 0 {
-                    burn(burn_out, burn_hash)
-                }
+            if asset_hash != xel_hash && check_pair(asset_hash, xel_hash, dex_hash) {
+            distribute_amount = swap(asset_hash, xel_hash, 0, fee_deposit);
+            distribute_asset = xel_hash;
+            burn_part = (distribute_amount as u128 * 3000000000u128 / 10000000000u128) as u64;
+            remaining = distribute_amount - burn_part;
             }
 
-            distribute_amount = remaining;
-            if asset_hash != xel_hash && check_pair(asset_hash, xel_hash, dex_hash) {
-                let swapped: u64 = swap(asset_hash, xel_hash, 0, remaining);
-                distribute_asset = xel_hash;
-                distribute_amount = swapped;
+            if burn_part > 0 && distribute_asset == xel_hash {
+                let swapped: u64 = swap(xel_hash, burn_hash, 0, burn_part);
+                distribute_amount = remaining;
+                if swapped > 0 {
+                    burn(swapped, burn_hash);
+                }
             }
         }
-    }
+    } 
+
     else {
         if asset_hash != xel_hash && check_pair(asset_hash, xel_hash, dex_hash) {
             let swapped: u64 = swap(asset_hash, xel_hash, 0, fee_deposit);
             distribute_asset = xel_hash;
             distribute_amount = swapped;
         }
+    }
+    
+    if (distribute_amount == 0) {
+        return
     }
 
     foreach (address, staked_amount) in stake_ledger.entries() {
@@ -102,10 +102,10 @@ pub fn distribute_fee(asset_hash: Hash) {
 
         if share > 0 {
             transfer(address, share, distribute_asset);
+            }
         }
     }
-}
-
+    
 entry stake_tokens() {
     require(get_deposits().len() == 1, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
