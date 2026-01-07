@@ -1,3 +1,9 @@
+fn is_owner(addr: Address) -> bool {
+    let storage: Storage = Storage::new();
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    return owners.contains(addr);
+}
+
 fn check_pair(token_a: Hash, token_b: Hash, dex_hash: Hash) -> bool {
     let dexStorage: ReadOnlyStorage = ReadOnlyStorage::new(dex_hash).expect("noDexStorage");
     let a_u256: u256 = token_a.to_u256();
@@ -10,9 +16,12 @@ fn check_pair(token_a: Hash, token_b: Hash, dex_hash: Hash) -> bool {
     return pair_map.unwrap_or({}).get(second).is_some() ? true : false;
 }
 
-fn swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64, amount_in: u64, dex_hash: Hash) -> u64 {
+fn swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64, amount_in: u64) -> u64 {
+    let storage: Storage = Storage::new()
+    let dex_hash: Hash = storage.load("dex_hash").expect("missingDEXHash");
+    let dex_entry: u16 = storage.load("dex_entry").expect("missingDEXEntry");
     let dex_contract: Contract = Contract::new(dex_hash).unwrap();
-    let amount_out: u64 = dex_contract.call(20, [token_in_hash, token_out_hash, amount_out_min], { token_in_hash: amount_in });
+    let amount_out: u64 = dex_contract.call(dex_entry, [token_in_hash, token_out_hash, amount_out_min], { token_in_hash: amount_in });
     return amount_out
 } 
 
@@ -49,7 +58,7 @@ pub fn distribute_fee(asset_hash: Hash) {
             }
 
             if swap_amount > 0 && check_pair(burn_hash, xel_hash, dex_hash) {
-                let swapped: u64 = swap(burn_hash, xel_hash, 0, swap_amount, dex_hash);
+                let swapped: u64 = swap(burn_hash, xel_hash, 0, swap_amount);
                 distribute_asset = xel_hash;
                 distribute_amount = swapped;
             } else {
@@ -61,8 +70,8 @@ pub fn distribute_fee(asset_hash: Hash) {
                 && check_pair(asset_hash, xel_hash, dex_hash)
                 && check_pair(xel_hash, burn_hash, dex_hash)
             {
-                let xel_out: u64 = swap(asset_hash, xel_hash, 0, burn_part, dex_hash);
-                let burn_out: u64 = swap(xel_hash, burn_hash, 0, xel_out, dex_hash);
+                let xel_out: u64 = swap(asset_hash, xel_hash, 0, burn_part);
+                let burn_out: u64 = swap(xel_hash, burn_hash, 0, xel_out);
                 if burn_out > 0 {
                     burn(burn_out, burn_hash)
                 }
@@ -70,7 +79,7 @@ pub fn distribute_fee(asset_hash: Hash) {
 
             distribute_amount = remaining;
             if asset_hash != xel_hash && check_pair(asset_hash, xel_hash, dex_hash) {
-                let swapped: u64 = swap(asset_hash, xel_hash, 0, remaining, dex_hash);
+                let swapped: u64 = swap(asset_hash, xel_hash, 0, remaining);
                 distribute_asset = xel_hash;
                 distribute_amount = swapped;
             }
@@ -78,7 +87,7 @@ pub fn distribute_fee(asset_hash: Hash) {
     }
     else {
         if asset_hash != xel_hash && check_pair(asset_hash, xel_hash, dex_hash) {
-            let swapped: u64 = swap(asset_hash, xel_hash, 0, fee_deposit, dex_hash);
+            let swapped: u64 = swap(asset_hash, xel_hash, 0, fee_deposit);
             distribute_asset = xel_hash;
             distribute_amount = swapped;
         }
@@ -150,8 +159,7 @@ entry recover_asset(asset_hash: Hash) {
     require(asset_hash != dao_hash, "assetCannotBeDAO");
 
     let caller: Address = get_caller().expect("noCaller");
-    let owner: Address = storage.load("contract_owner").expect("missingContractOwner");
-    require(caller == owner, "notContractOwner");
+    require(is_owner(caller), "notOwner");
 
     let balance: u64 = get_balance_for_asset(asset_hash).expect("noBalance");
     require(balance > 0, "noBalance");
@@ -159,15 +167,23 @@ entry recover_asset(asset_hash: Hash) {
     return 0;
 }
 
-entry update_dex_hash(new_dex_hash: Hash) {
+entry set_dex_hash(new_dex_hash: Hash) {
     require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
 
     let caller: Address = get_caller().expect("noCaller");
-    let owner: Address = storage.load("contract_owner").expect("missingContractOwner");
-    require(caller == owner, "notContractOwner");
+    require(is_owner(caller), "notOwner");
 
     storage.store("dex_hash", new_dex_hash);
+    return 0;
+}
+
+entry set_dao_entry(dex_entry: u16) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
+    let storage: Storage = Storage::new();
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+    storage.store("dex_entry", dex_entry);
     return 0;
 }
 
@@ -176,8 +192,7 @@ entry update_burn_token(token: optional<Hash>) {
 
     let storage: Storage = Storage::new();
     let caller: Address = get_caller().expect("noCaller");
-    let owner: Address = storage.load("contract_owner").expect("missingContractOwner");
-    require(caller == owner, "notContractOwner");
+    require(is_owner(caller), "notOwner");
 
     if token.is_some() {
         storage.store("burn_token", token.unwrap());
@@ -185,6 +200,35 @@ entry update_burn_token(token: optional<Hash>) {
         storage.delete("burn_token");
     }
 
+    return 0;
+}
+
+entry add_owner(new_owner: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    require(!owners.contains(new_owner), "alreadyOwner");
+    owners.push(new_owner); 
+    storage.store("owners", owners);
+    return 0;
+}
+
+entry remove_owner(owner_to_remove: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").expect("missingOwners");
+    let idx: optional<u32> = owners.index_of(owner_to_remove);
+    require(idx.is_some(), "notOwner");
+    owners.remove(idx.unwrap());
+    storage.store("owners", owners);
     return 0;
 }
 
@@ -207,10 +251,13 @@ hook constructor() -> u64 {
     
     let empty_stake_ledger: map<Address, u64> = {};
     
+    storage.store("dex_hash", Hash::from_hex("d83211562707405e06af2cc758c18b2d21b68deabcb3cf781686acf86a825c04"));
+    storage.store("dex_entry", 21u16);
     storage.store("dao_token", dao_hash);
     storage.store("stake_ledger", empty_stake_ledger);
     storage.store("total_staked", 0);
-    storage.store("contract_owner", deployer);
+    let owners: Address[] = [get_caller().expect("noCaller")];
+    storage.store("owners", owners);
 
     return 0;
 }

@@ -41,6 +41,12 @@ fn safe_transfer(to: Receiver, amount: u64, asset_hash: Hash) {
     return;
 }
 
+fn is_owner(addr: Address) -> bool {
+    let storage: Storage = Storage::new();
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    return owners.contains(addr);
+}
+
 fn new_asset_id() -> u64 {
     let storage: Storage = Storage::new();
     let asset_id: u64 = storage.load("lastAssetId").expect("missingLastAssetId");
@@ -420,7 +426,8 @@ entry swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
 entry update_dao(new_dao: DAO) {
     require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
     let dao: DAO = storage.load("DAO").expect("missingDAO");
     let receiver: Receiver = Receiver::Contract { hash: dao.hash };
     let whitelist: Receiver[] = storage.load("feelessWhitelist").expect("noWhitelist");
@@ -433,7 +440,8 @@ entry update_dao(new_dao: DAO) {
 entry update_dao_fee(fee: u64) {
     require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
     require(fee > 99800000, "feeTooLarge");
     storage.store("dev_fee", fee)
     return 0;
@@ -442,7 +450,8 @@ entry update_dao_fee(fee: u64) {
 entry update_creator_fee_tiers(new_tiers: FeeTier[]) {
     require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
     require(new_tiers.len() > 0, "emptyTiers");
     
     require(new_tiers[0].fee_multiplier > 98000000, "feeTooLarge");
@@ -460,7 +469,8 @@ entry update_creator_fee_tiers(new_tiers: FeeTier[]) {
 entry add_launchpad(launchpad: Hash) {
     require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
     let launchpads: Hash[] = storage.load("launchpads").unwrap_or([]);
     require(!launchpads.contains(launchpad), "alreadyExists");
     launchpads.push(launchpad);
@@ -471,7 +481,8 @@ entry add_launchpad(launchpad: Hash) {
 entry remove_launchpad(launchpad: Hash) {
     require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
     let launchpads: Hash[] = storage.load("launchpads").expect("noLaunchpads");
     let idx: optional<u32> = launchpads.index_of(launchpad);
     require(idx.is_some(), "notLaunchpad");
@@ -483,10 +494,8 @@ entry remove_launchpad(launchpad: Hash) {
 entry remove_feeless_whitelist(contract_hash: Hash) {
     require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    require(
-        get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"),
-        "notContractOwner"
-    );
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
 
     let dao: DAO = storage.load("DAO").expect("missingDAO");
     require(contract_hash != dao.hash, "cannotRemoveDAO");
@@ -504,6 +513,34 @@ entry remove_feeless_whitelist(contract_hash: Hash) {
     return 0;
 }
 
+entry add_owner(new_owner: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    require(!owners.contains(new_owner), "alreadyOwner");
+    owners.push(new_owner); 
+    storage.store("owners", owners);
+    return 0;
+}
+
+entry remove_owner(owner_to_remove: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").expect("missingOwners");
+    let idx: optional<u32> = owners.index_of(owner_to_remove);
+    require(idx.is_some(), "notOwner");
+    owners.remove(idx.unwrap());
+    storage.store("owners", owners);
+    return 0;
+}
 
 // ---------------------- CONSTRUCTOR ----------------------
 
@@ -514,13 +551,14 @@ hook constructor() -> u64 {
 
     let dao: DAO = DAO {
     hash: Hash::from_hex("d83211562707405e06af2cc758c18b2d21b68deabcb3cf781686acf86a825c04"),
-    entry: 2
+    entry: 3
     }
     let whitelist: Receiver[] = [Receiver::Contract { hash: dao.hash }]
 
     storage.store("DAO", dao);
     storage.store("feelessWhitelist", whitelist);
-    storage.store("owner", source);
+    let owners: Address[] = [get_caller().expect("noCaller")];
+    storage.store("owners", owners);
     storage.store("dev_fee", 99950000 as u256)
     let default_tiers: FeeTier[] = [
         FeeTier { marketcap_threshold: 420, fee_multiplier: 99700000 },       // 0.3%
