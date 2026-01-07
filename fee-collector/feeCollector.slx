@@ -59,9 +59,7 @@ pub fn distribute_fee(asset_hash: Hash) {
                 let swapped: u64 = swap(burn_hash, xel_hash, 0, remaining);
                 distribute_asset = xel_hash;
                 distribute_amount = swapped;
-            } else {
-                return
-            }
+            } 
         }
         else {
             if asset_hash != xel_hash && check_pair(asset_hash, xel_hash, dex_hash) {
@@ -80,6 +78,10 @@ pub fn distribute_fee(asset_hash: Hash) {
             }
         }
     } 
+    
+    if (distribute_amount == 0) {
+        return
+    }
 
     else {
         if asset_hash != xel_hash && check_pair(asset_hash, xel_hash, dex_hash) {
