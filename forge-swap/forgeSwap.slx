@@ -428,8 +428,8 @@ entry update_dao(new_dao: DAO) {
     let storage: Storage = Storage::new();
     let caller: Address = get_caller().expect("noCaller");
     require(is_owner(caller), "notOwner");
-    let dao: DAO = storage.load("DAO").expect("missingDAO");
-    let receiver: Receiver = Receiver::Contract { hash: dao.hash };
+
+    let receiver: Receiver = Receiver::Contract { hash: new_dao.hash };
     let whitelist: Receiver[] = storage.load("feelessWhitelist").expect("noWhitelist");
     whitelist.push(receiver);
     storage.store("DAO", new_dao);
