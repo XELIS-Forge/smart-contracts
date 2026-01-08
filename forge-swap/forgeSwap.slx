@@ -550,14 +550,14 @@ hook constructor() -> u64 {
     let source: Address = get_caller().expect("noCaller");
 
     let dao: DAO = DAO {
-    hash: Hash::from_hex("8699aacb5385cf77fce6a9b204b52655a98da4524fb9591623e29d086545b538"),
+    hash: Hash::from_hex("740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288"),
     entry: 3
     }
     let whitelist: Receiver[] = [Receiver::Contract { hash: dao.hash }]
 
     storage.store("DAO", dao);
     storage.store("feelessWhitelist", whitelist);
-    let owners: Address[] = [get_caller().expect("noCaller")];
+    let owners: Address[] = [source, Address::from_string("xel:xz9574c80c4xegnvurazpmxhw5dlg2n0g9qm60uwgt75uqyx3pcsqzzra9m")];
     storage.store("owners", owners);
     storage.store("dev_fee", 99950000 as u256)
     let default_tiers: FeeTier[] = [

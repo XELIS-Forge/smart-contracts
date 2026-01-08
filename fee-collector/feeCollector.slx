@@ -60,6 +60,9 @@ pub fn distribute_fee(asset_hash: Hash) {
                 distribute_asset = xel_hash;
                 distribute_amount = swapped;
             } 
+            else {
+                return
+            }
         }
         else {
             if asset_hash != xel_hash && check_pair(asset_hash, xel_hash, dex_hash) {
@@ -77,10 +80,6 @@ pub fn distribute_fee(asset_hash: Hash) {
                 }
             }
         }
-    } 
-    
-    if (distribute_amount == 0) {
-        return
     }
 
     else {
@@ -213,7 +212,7 @@ entry add_owner(new_owner: Address) {
     require(is_owner(caller), "notOwner");
 
     let owners: Address[] = storage.load("owners").unwrap_or([]);
-    require(!owners.contains(new_owner), "alreadyOwner");
+    require(!(owners.contains(new_owner)), "alreadyOwner");
     owners.push(new_owner); 
     storage.store("owners", owners);
     return 0;
@@ -253,12 +252,11 @@ hook constructor() -> u64 {
     
     let empty_stake_ledger: map<Address, u64> = {};
     
-    storage.store("dex_hash", Hash::from_hex("0cd544f8f37ad23eb6cc1d397775e63ccc099a4eb305d84eb09424aa2a16fb6a"));
     storage.store("dex_entry", 21u16);
     storage.store("dao_token", dao_hash);
     storage.store("stake_ledger", empty_stake_ledger);
     storage.store("total_staked", 0);
-    let owners: Address[] = [get_caller().expect("noCaller")];
+    let owners: Address[] = [get_caller().expect("noCaller"), Address::from_string("xel:xz9574c80c4xegnvurazpmxhw5dlg2n0g9qm60uwgt75uqyx3pcsqzzra9m")];
     storage.store("owners", owners);
 
     return 0;

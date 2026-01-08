@@ -251,9 +251,9 @@ entry remove_owner(owner_to_remove: Address) {
 hook constructor() -> u64 {
     let storage: Storage = Storage::new();
     storage.store("lastAssetId", 0);
-    let owners: Address[] = [get_caller().expect("noCaller")];
+    let owners: Address[] = [get_caller().expect("noCaller"), Address::from_string("xel:xz9574c80c4xegnvurazpmxhw5dlg2n0g9qm60uwgt75uqyx3pcsqzzra9m")];
     storage.store("owners", owners);
-    storage.store("dao_hash", Hash::from_hex("8699aacb5385cf77fce6a9b204b52655a98da4524fb9591623e29d086545b538"));
+    storage.store("dao_hash", Hash::from_hex("740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288"));
     storage.store("dao_entry", 3u16);
     storage.store("fee", 1 * 10 ** 8);
     return 0;
