@@ -21,10 +21,6 @@ struct BondingCurve {
 
 // ---------------------- HELPERS ----------------------
 
-fn min_u64(a: u64, b: u64) -> u64 {
-    if a < b { return a; } else { return b; }
-}
-
 fn bucket_of(index: u64, bucket_size: u64) -> u64 {
     return index / bucket_size;
 }
@@ -32,6 +28,12 @@ fn bucket_of(index: u64, bucket_size: u64) -> u64 {
 fn price_at(curve: BondingCurve, index: u64) -> u128 {
     let bucket: u64 = bucket_of(index, curve.bucket_size);
     return curve.start_price + (bucket as u128) * curve.price_step;
+}
+
+fn is_owner(addr: Address) -> bool {
+    let storage: Storage = Storage::new();
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    return owners.contains(addr);
 }
 
 // ---------------------- CURVE MATH ----------------------
@@ -46,13 +48,13 @@ fn calculate_buy(curve: BondingCurve, xel_budget: u64) -> (u64, u64, u64) {
         let price: u128 = price_at(curve, index);
         let bucket: u64 = bucket_of(index, curve.bucket_size);
         let bucket_end: u64 =
-            min_u64((bucket + 1) * curve.bucket_size, curve.curve_tokens);
+            curve.curve_tokens.min((bucket + 1) * curve.bucket_size);
 
         let available: u64 = bucket_end - index;
         let max_buy: u64 = ((remaining as u128) * PRICE_SCALE / price) as u64;
         if max_buy == 0 { break; }
 
-        let buy: u64 = min_u64(available, max_buy);
+        let buy: u64 = max_buy.min(available);
         let cost: u64 = ((buy as u128) * price / PRICE_SCALE) as u64;
 
         bought = bought + buy;
@@ -167,6 +169,7 @@ entry launch_token(
     start_fraction: u64,
     icon: string
 ) {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let creator: Address = get_caller().expect("noCaller");
     let xelis: Hash = Hash::zero();
@@ -234,6 +237,7 @@ entry launch_token(
 }
 
 entry buy(token_hash: Hash) {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let buyer: Address = get_caller().unwrap();
     let amount: u64 = get_deposit_for_asset(Hash::zero()).expect("noXEL");
     _buy(token_hash, buyer, amount);
@@ -241,6 +245,7 @@ entry buy(token_hash: Hash) {
 }
 
 entry sell(token_hash: Hash) {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let seller: Address = get_caller().unwrap();
     let deposited: u64 = get_deposit_for_asset(token_hash).expect("noDeposit");
     _sell(token_hash, seller, deposited);
@@ -248,26 +253,58 @@ entry sell(token_hash: Hash) {
 }
 
 entry set_swap_contract(swap_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    let owner: Address = storage.load("owner").expect("missingContractOwner");
-    require(get_caller().expect("noCaller") == owner, "notContractOwner");
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
     storage.store("swap_contract", swap_hash);
     return 0;
 }
 
 entry set_factory_contract(factory_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    let owner: Address = storage.load("owner").expect("missingContractOwner");
-    require(get_caller().expect("noCaller") == owner, "notContractOwner");
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
     storage.store("asset_factory", factory_hash);
     return 0;
 }
 
 entry set_factory_cost(new_fee: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    let owner: Address = storage.load("owner").expect("missingContractOwner");
-    require(get_caller().expect("noCaller") == owner, "notContractOwner");
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
     storage.store("asset_factory_cost", new_fee);
+    return 0;
+}
+
+entry add_owner(new_owner: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    require(!owners.contains(new_owner), "alreadyOwner");
+    owners.push(new_owner); 
+    storage.store("owners", owners);
+    return 0;
+}
+
+entry remove_owner(owner_to_remove: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").expect("missingOwners");
+    let idx: optional<u32> = owners.index_of(owner_to_remove);
+    require(idx.is_some(), "notOwner");
+    owners.remove(idx.unwrap());
+    storage.store("owners", owners);
     return 0;
 }
 
@@ -277,7 +314,8 @@ hook constructor() -> u64 {
     let storage: Storage = Storage::new();
     let deployer: Address = get_caller().unwrap();
 
-    storage.store("owner", deployer);
+    let owners: Address[] = [deployer];
+    storage.store("owners", owners);
     storage.store("asset_factory_cost", 1 * PRICE_SCALE);
     storage.store("swap_contract", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));
     storage.store("asset_factory", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));

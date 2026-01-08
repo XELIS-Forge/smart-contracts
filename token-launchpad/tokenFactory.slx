@@ -23,9 +23,11 @@ fn (balance Balance) charge(cost: u64, payable: bool) {
     require(cost <= balance.balance, "balanceTooLow");
 
     if (payable) {
-        let dao_hash: Hash = Storage::new().load("DAOHash").expect("missingDAOHash");
+        let storage: Storage = Storage::new()
+        let dao_hash: Hash = storage.load("dao_hash").expect("missingDAOHash");
+        let dao_entry: u16 = storage.load("dao_entry").expect("missingDAOEntry");
         let dao_contract: Contract = Contract::new(dao_hash).unwrap();
-        dao_contract.call(2, [balance.asset], { balance.asset: cost });
+        dao_contract.call(dao_entry, [balance.asset], { balance.asset: cost });
     }
 
     balance.balance -= cost;
@@ -53,9 +55,16 @@ fn new_asset_id() -> u64 {
     return asset_id;
 }
 
+fn is_owner(addr: Address) -> bool {
+    let storage: Storage = Storage::new();
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    return owners.contains(addr);
+}
+
 // ---------------------- INTERNAL FUNCTIONS ----------------------
 
 fn _mint(receiver: Receiver, asset_hash: Hash, amount: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let meta_asset: MetaAsset = Storage::new().load(asset_hash).expect("assetNotFound");
     let source: Address = get_caller().expect("noCaller");
     
@@ -70,6 +79,7 @@ fn _mint(receiver: Receiver, asset_hash: Hash, amount: u64) {
 }
 
 fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) -> Hash {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let owner: Address = get_caller().expect("noCaller");
     let fee: u64 = storage.load("fee").expect("missingFee");
@@ -148,6 +158,7 @@ entry mint(asset_hash: Hash, amount: u64) {
 }
 
 entry transfer_ownership(asset_hash: Hash, new_owner: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
     require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
@@ -158,6 +169,7 @@ entry transfer_ownership(asset_hash: Hash, new_owner: Address) {
 }
 
 entry renounce_ownership(asset_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
     require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
@@ -168,6 +180,7 @@ entry renounce_ownership(asset_hash: Hash) {
 }
 
 entry set_icon(asset_hash: Hash, new_icon: string) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
     require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
@@ -178,18 +191,58 @@ entry set_icon(asset_hash: Hash, new_icon: string) {
 }
 
 entry set_fee(new_fee: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    let owner: Address = storage.load("owner").expect("missingContractOwner");
-    require(get_caller().expect("noCaller") == owner, "notContractOwner");
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
     storage.store("fee", new_fee);
     return 0;
 }
 
 entry set_dao_contract(dao_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    let owner: Address = storage.load("owner").expect("missingContractOwner");
-    require(get_caller().expect("noCaller") == owner, "notContractOwner");
-    storage.store("DAOHash", dao_hash);
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+    storage.store("dao_hash", dao_hash);
+    return 0;
+}
+
+entry set_dao_entry(dao_entry: u16) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
+    let storage: Storage = Storage::new();
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+    storage.store("dao_entry", dao_entry);
+    return 0;
+}
+
+entry add_owner(new_owner: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    require(!owners.contains(new_owner), "alreadyOwner");
+    owners.push(new_owner); 
+    storage.store("owners", owners);
+    return 0;
+}
+
+entry remove_owner(owner_to_remove: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").expect("missingOwners");
+    let idx: optional<u32> = owners.index_of(owner_to_remove);
+    require(idx.is_some(), "notOwner");
+    owners.remove(idx.unwrap());
+    storage.store("owners", owners);
     return 0;
 }
 
@@ -198,8 +251,10 @@ entry set_dao_contract(dao_hash: Hash) {
 hook constructor() -> u64 {
     let storage: Storage = Storage::new();
     storage.store("lastAssetId", 0);
-    storage.store("owner", get_caller().expect("noCaller"));
-    storage.store("DAOHash", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));
+    let owners: Address[] = [get_caller().expect("noCaller"), Address::from_string("xel:xz9574c80c4xegnvurazpmxhw5dlg2n0g9qm60uwgt75uqyx3pcsqzzra9m")];
+    storage.store("owners", owners);
+    storage.store("dao_hash", Hash::from_hex("740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288"));
+    storage.store("dao_entry", 3u16);
     storage.store("fee", 1 * 10 ** 8);
     return 0;
 }

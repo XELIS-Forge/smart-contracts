@@ -33,20 +33,18 @@ fn (dao DAO) charge(token: Hash, amount: u64) {
 
 // ---------------------- HELPER FUNCTIONS ----------------------
 
-fn min(x: u64, y: u64) -> u64 {
-    if x < y {
-        return x;
-    } else { 
-        return y; 
-    }
-}
-
 fn safe_transfer(to: Receiver, amount: u64, asset_hash: Hash) {
     match to {
         Receiver::Contract { hash }  => {transfer_contract(hash, amount, asset_hash);}
         Receiver::Address { address } => {transfer(address, amount, asset_hash)}
     }
     return;
+}
+
+fn is_owner(addr: Address) -> bool {
+    let storage: Storage = Storage::new();
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    return owners.contains(addr);
 }
 
 fn new_asset_id() -> u64 {
@@ -70,7 +68,7 @@ fn store_pair(token_a: Hash, token_b: Hash, lp_asset_hash: Hash) {
     storage.store(pair_key, pair_map);
 }
 
-fn load_pair(token_a: Hash, token_b: Hash) -> optional<Hash> {
+pub fn load_pair(token_a: Hash, token_b: Hash) -> optional<Hash> {
     let storage: Storage = Storage::new();
     let a_u256: u256 = token_a.to_u256();
     let b_u256: u256 = token_b.to_u256();
@@ -88,7 +86,7 @@ fn create_pair(token_a_hash: Hash, token_b_hash: Hash, locked: bool) -> Hash {
     let ticker_a: string = Asset::get_by_hash(token_a_hash).expect("tokenANotFound").get_ticker();
     let ticker_b: string = Asset::get_by_hash(token_b_hash).expect("tokenBNotFound").get_ticker();
     let name: string = ticker_a + " " + ticker_b + " LP"; 
-    let ticker: string = "LP";
+    let ticker: string = "FORGELP";
     let decimals: u8 = 8; 
     let asset: optional<Asset> = Asset::create(asset_id, name, ticker, decimals, MaxSupplyMode::None);
     require(asset.is_some(), "assetNotCreated");
@@ -136,21 +134,19 @@ fn get_liquidity_amounts(liquidity_token_hash: Hash, xel_balance: optional<u64>)
     let token_hashes: Hash[] = lp_asset.reserves.keys();
     let token_a: Hash = token_hashes[0];
     let token_b: Hash = token_hashes[1];
-    let amount_a_in: u64 = 0;
-    let amount_b_in: u64 = 0;
+    let amount_a_in: u64 = get_deposit_for_asset(token_a).expect("noTokenADeposit");
+    let amount_b_in: u64 =  get_deposit_for_asset(token_b).expect("noTokenADeposit");
+
     if (xel_balance.is_some()) {
-        if (Hash::zero() == token_a) {
-            amount_a_in = xel_balance.unwrap();
-            amount_b_in = get_deposit_for_asset(token_b).expect("noTokenBDeposit");
+        let xel: u64 = xel_balance.unwrap();
+
+        if (token_a == Hash::zero()) {
+            amount_a_in = xel;
         }
-        if (Hash::zero() == token_b) {
-            amount_a_in = get_deposit_for_asset(token_a).expect("noTokenBDeposit");
-            amount_b_in = xel_balance.unwrap();
+
+        if (token_b == Hash::zero()) {
+            amount_b_in = xel;
         }
-    }
-    else {
-        amount_a_in = get_deposit_for_asset(token_a).expect("noTokenADeposit");
-        amount_b_in = get_deposit_for_asset(token_b).expect("noTokenBDeposit");
     }
 
     let reserve_a: u64 = lp_asset.reserves.get(token_a).expect("noReserveA");
@@ -169,14 +165,11 @@ fn calculate_liquidity(amount_a: u64, amount_b: u64, l_total_supply: u64, l_rese
         let liquidity: u64 = (((amount_a as u128) * (amount_b as u128)).sqrt() as u64) - (MINIMUM_LIQUIDITY);
         return liquidity;
     } else {
-        return min(
-            (((amount_a as u128) * (l_total_supply as u128) / (l_reserve_a as u128)) as u64), 
-            (((amount_b as u128) * (l_total_supply as u128) / (l_reserve_b as u128)) as u64)
-        );
+        return (((amount_a as u128) * (l_total_supply as u128) / (l_reserve_a as u128)) as u64).min((((amount_b as u128) * (l_total_supply as u128) / (l_reserve_b as u128)) as u64))
     }
 }
 
-fn mint_liquidity(receiver: Receiver, amount_a: u64, amount_b: u64, liquidity_token_hash: Hash) {
+fn mint_liquidity(receiver: Receiver, amount_a: u64, amount_b: u64, liquidity_token_hash: Hash) -> u64 {
     let storage: Storage = Storage::new();
     let asset: Asset = Asset::get_by_hash(liquidity_token_hash).expect("noAsset");
     let l_total_supply: u64 = asset.get_supply();
@@ -196,9 +189,11 @@ fn mint_liquidity(receiver: Receiver, amount_a: u64, amount_b: u64, liquidity_to
 
     l_reserve_a = l_reserve_a + amount_a;
     l_reserve_b = l_reserve_b + amount_b;
-    lp_asset.reserves = {token_a: l_reserve_a, token_b: l_reserve_b};
+    lp_asset.reserves.insert(token_a, l_reserve_a);
+    lp_asset.reserves.insert(token_b, l_reserve_b);
     fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
     storage.store(liquidity_token_hash, lp_asset);
+    return liquidity;
 }
 
 fn creator_fee_multiplier_from_marketcap(marketcap: u64) -> u256 {
@@ -216,10 +211,10 @@ fn creator_fee_multiplier_from_marketcap(marketcap: u64) -> u256 {
     return fee_tiers[fee_tiers.len() - 1].fee_multiplier;
 }
 
-fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash, token_out_hash: Hash, creator: optional<Address>) -> (u64, u64) {
+fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash, token_out_hash: Hash, creator: optional<Address>) -> (u64, u64, u64) {
     let storage: Storage = Storage::new();
     let dev_fee_scaler: u256 = storage.load("dev_fee").expect("noDevFee")
-    let amount_after_dev: u256 = (amount_in as u256) * (dev_fee_scaler) / (100000000);
+    let amount_after_dev: u256 = (amount_in as u256) * (dev_fee_scaler) / (100000000u256);
     let dev_fee: u64 = amount_in - amount_after_dev as u64;
     
     let amount_after_creator: u256 = amount_after_dev;
@@ -227,39 +222,41 @@ fn calculate_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, 
         // Determine which token is XEL and which is the other token
         let (xel_reserve, token_reserve, token_hash) = token_in_hash == Hash::zero() ? (l_reserve_in, l_reserve_out, token_out_hash) : (l_reserve_out, l_reserve_in, token_in_hash)
         // Calculate price: XEL per token (scaled by 1e8)
-        let price_per_token: u128 = (xel_reserve as u128) * (100000000) / (token_reserve as u128);
+        let price_per_token: u128 = (xel_reserve as u128) * (100000000u128) / (token_reserve as u128);
         
         // Get token supply
         let token_supply: u64 = Asset::get_by_hash(token_hash).expect("tokenNotFound").get_supply();
         
         // Calculate market cap: (price * supply) / 1e8, result in XEL with 5 decimals
-        let marketcap: u64 = ((price_per_token * (token_supply as u128)) / (100000000 as u128)) as u64;
+        let marketcap: u64 = ((price_per_token * (token_supply as u128)) / (100000000u128)) as u64;
         
         // Apply dynamic creator fee based on market cap
-        amount_after_creator = amount_after_dev * creator_fee_multiplier_from_marketcap(marketcap) / (100000000 as u256);
+        amount_after_creator = amount_after_dev * creator_fee_multiplier_from_marketcap(marketcap) / (100000000u256);
         let creator_fee: u64 = amount_after_dev as u64 - amount_after_creator as u64;
         transfer(creator.unwrap(), creator_fee, token_in_hash);
     }
 
-    let amount_after_lp: u256 = amount_after_creator * (99780000);
+    let amount_after_lp: u256 = amount_after_creator * 99780000 / 100000000;
     let numerator: u256 = amount_after_lp * (l_reserve_out as u256);
-    let denominator: u256 = (l_reserve_in as u256) * (100000000) + (amount_after_lp);
+    let denominator: u256 = (l_reserve_in as u256) + (amount_after_lp);
 
     require(denominator > 0, "divisionByZero");
-    return ((numerator / denominator) as u64, dev_fee);
+    return (amount_after_creator as u64, (numerator / denominator) as u64, dev_fee);
 }
 
-fn calculate_feeless_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash) -> (u64, u64) {
+fn calculate_feeless_swap_output(amount_in: u64, l_reserve_in: u64, l_reserve_out: u64, token_in_hash: Hash) -> (u64, u64, u64) {
     let numerator: u128 = amount_in as u128 * (l_reserve_out as u128);
     let denominator: u128 = (l_reserve_in as u128) + (amount_in as u128);
 
     require(denominator > 0, "divisionByZero");
-    return ((numerator / denominator) as u64, 0);
+    return (amount_in , (numerator / denominator) as u64, 0);
 }
 
 // ---------------------- INTERNAL FUNCTIONS ----------------------
 
-fn _add_liquidity(receiver: Receiver, token0_hash: Hash, token1_hash: Hash) {
+fn _add_liquidity(receiver: Receiver, token0_hash: Hash, token1_hash: Hash) -> u64 {
+    let depositsCount = get_deposits().len()
+    require((depositsCount == 2 || depositsCount == 3), "incorrectNumDeposits")
     require(token0_hash != token1_hash, "duplicateTokenInput");
     let storage: Storage = Storage::new();
 
@@ -276,11 +273,15 @@ fn _add_liquidity(receiver: Receiver, token0_hash: Hash, token1_hash: Hash) {
     }
 
     let (amount_a, amount_b): (u64, u64) = get_liquidity_amounts(liquidity_token_hash, xel_balance);
+    require(amount_a > 1000, "toLittleInput")
+    require(amount_b > 1000, "toLittleInput")
 
-    mint_liquidity(receiver, amount_a, amount_b, liquidity_token_hash);
+    let liquidity: u64 = mint_liquidity(receiver, amount_a, amount_b, liquidity_token_hash);
+    return liquidity;
 }
 
-fn _remove_liquidity(receiver: Receiver, liquidity_token_hash: Hash) {
+fn _remove_liquidity(receiver: Receiver, liquidity_token_hash: Hash) -> map<Hash, u64> {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let liquidity: u64 = get_deposit_for_asset(liquidity_token_hash).expect("noDeposit");
     let l_total_supply: u64 = Asset::get_by_hash(liquidity_token_hash).expect("noAsset").get_supply();
@@ -303,16 +304,19 @@ fn _remove_liquidity(receiver: Receiver, liquidity_token_hash: Hash) {
 
     l_reserve_a = l_reserve_a - amount_a;
     l_reserve_b = l_reserve_b - amount_b;
-    lp_asset.reserves = {token_a: l_reserve_a, token_b: l_reserve_b};
+    lp_asset.reserves.insert(token_a, l_reserve_a);
+    lp_asset.reserves.insert(token_b, l_reserve_b);
     storage.store(liquidity_token_hash, lp_asset);
     
     safe_transfer(receiver, amount_a, token_a);
     safe_transfer(receiver, amount_b, token_b);
 
     fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
+    return {token_a: amount_a, token_b: amount_b};
 }
 
-fn _swap(receiver: Receiver, token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64, feeless: bool) {
+fn _swap(receiver: Receiver, token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64, feeless: bool) -> u64 {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let amount_in: u64 = get_deposit_for_asset(token_in_hash).expect("noDeposit");
     require(amount_in > 0, "noDeposit");
     
@@ -327,15 +331,16 @@ fn _swap(receiver: Receiver, token_in_hash: Hash, token_out_hash: Hash, amount_o
     let l_reserve_in: u64 = lp_asset.reserves.get(token_in_hash).expect("noReserveIn");
     let l_reserve_out: u64 = lp_asset.reserves.get(token_out_hash).expect("noReserveOut");
 
-    let (amount_out, dev_fee): (u64, u64) = feeless ? calculate_feeless_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash) : calculate_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash, token_out_hash, lp_asset.creator);
+    let (lp_amount_in, amount_out, dev_fee): (u64, u64, u64) = feeless ? calculate_feeless_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash) : calculate_swap_output(amount_in, l_reserve_in, l_reserve_out, token_in_hash, token_out_hash, lp_asset.creator);
 
     require(amount_out >= amount_out_min, "slippageExceeded");
     require(amount_out > 0, "insufficientOutputAmount");
     require(amount_out < l_reserve_out, "insufficientLiquidity");
 
-    l_reserve_in = l_reserve_in + amount_in;
+    l_reserve_in = l_reserve_in + lp_amount_in;
     l_reserve_out = l_reserve_out - amount_out;
-    lp_asset.reserves = {token_in_hash: l_reserve_in, token_out_hash: l_reserve_out};
+    lp_asset.reserves.insert(token_in_hash, l_reserve_in);
+    lp_asset.reserves.insert(token_out_hash, l_reserve_out);
     storage.store(lp_asset_hash, lp_asset);
     fire_event(1, (Transaction::current().expect("missingTransaction").hash(), lp_asset.reserves));
     
@@ -344,42 +349,55 @@ fn _swap(receiver: Receiver, token_in_hash: Hash, token_out_hash: Hash, amount_o
         dao.charge(token_in_hash, dev_fee);
     }
     safe_transfer(receiver, amount_out, token_out_hash);
+    return amount_out;
 }
 
 // ---------------------- PUB FN WRAPPERS ----------------------
 
-pub fn contract_add_liquidity(token0_hash: Hash, token1_hash: Hash) {
+pub fn contract_add_liquidity(token0_hash: Hash, token1_hash : Hash) -> u64 {
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
-    _add_liquidity(receiver, token0_hash, token1_hash);
+    let liquidity: u64 = _add_liquidity(receiver, token0_hash, token1_hash);
+    return liquidity;
 }
 
-pub fn contract_remove_liquidity(liquidity_token_hash: Hash) {
+pub fn contract_remove_liquidity(liquidity_token_hash: Hash) -> map<Hash, u64> {
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
-    _remove_liquidity(receiver, liquidity_token_hash);
+    let assets: map<Hash, u64> = _remove_liquidity(receiver, liquidity_token_hash);
+    return assets;
 }
 
-pub fn contract_swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
+pub fn contract_swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) -> u64 {
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
-    _swap(receiver, token_in_hash, token_out_hash, amount_out_min, false);
+    let amount_out: u64 = _swap(receiver, token_in_hash, token_out_hash, amount_out_min, false); 
+    return amount_out;
 }
 
-pub fn contract_feeless_swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
+pub fn contract_feeless_swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) -> u64 {
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
-    _swap(receiver, token_in_hash, token_out_hash, amount_out_min, true);
+    let amount_out: u64 = _swap(receiver, token_in_hash, token_out_hash, amount_out_min, true); 
+    return amount_out;
 }
 
-pub fn contract_create_locked_pair(token_in_hash: Hash, token_out_hash: Hash) {
-    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
-    let launchpad_hash: Hash = Storage::new().load("launchpad").expect("missingLaunchpadHash");
-    require(get_contract_caller().expect("noCaller") == launchpad_hash, "notLaunchpad");
-    create_pair(token_in_hash, token_out_hash, true);
+pub fn contract_create_locked_pair(token_in_hash: Hash, token_out_hash: Hash) -> Hash {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
+    let storage: Storage = Storage::new();
+    let caller: Hash = get_contract_caller().expect("noCaller")
+    let launchpads: Hash[] = storage.load("launchpads").unwrap_or([]);
+    require( launchpads.contains(caller), "notLaunchpad");
+    let receiver: Receiver = Receiver::Contract { hash: caller };
+
+    let lp_asset_hash: Hash = create_pair(token_in_hash, token_out_hash, true);
+    return lp_asset_hash
 }
 
 pub fn contract_unlock_pair(lp_asset_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") };
-    let launchpad_hash: Hash = storage.load("launchpad").expect("missingLaunchpadHash");
-    require(get_contract_caller().expect("noCaller") == launchpad_hash, "notLaunchpad");
+    let caller: Hash =  get_contract_caller().expect("noCaller")
+    let launchpads: Hash[] = storage.load("launchpads").unwrap_or([]);
+    require( launchpads.contains(caller), "notLaunchpad");
+    let receiver: Receiver = Receiver::Contract { hash: caller };
+
     let lp_asset: LPAsset = storage.load(lp_asset_hash).expect("noLPAsset");
     lp_asset.locked = false;
     storage.store(lp_asset_hash, lp_asset);
@@ -406,10 +424,12 @@ entry swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64) {
 }
 
 entry update_dao(new_dao: DAO) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
-    let dao: DAO = storage.load("DAO").expect("missingDAO");
-    let receiver: Receiver = Receiver::Contract { hash: dao.hash };
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let receiver: Receiver = Receiver::Contract { hash: new_dao.hash };
     let whitelist: Receiver[] = storage.load("feelessWhitelist").expect("noWhitelist");
     whitelist.push(receiver);
     storage.store("DAO", new_dao);
@@ -418,16 +438,20 @@ entry update_dao(new_dao: DAO) {
 }
 
 entry update_dao_fee(fee: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
     require(fee > 99800000, "feeTooLarge");
     storage.store("dev_fee", fee)
     return 0;
 }
 
 entry update_creator_fee_tiers(new_tiers: FeeTier[]) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
     require(new_tiers.len() > 0, "emptyTiers");
     
     require(new_tiers[0].fee_multiplier > 98000000, "feeTooLarge");
@@ -442,10 +466,79 @@ entry update_creator_fee_tiers(new_tiers: FeeTier[]) {
     return 0;
 }
 
-entry update_launchpad(launchpad: Hash) { // make this a hash array
+entry add_launchpad(launchpad: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
-    require(get_caller().expect("noCaller") == storage.load("owner").expect("noOwner"), "notContractOwner");
-    storage.store("launchpad", launchpad);
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+    let launchpads: Hash[] = storage.load("launchpads").unwrap_or([]);
+    require(!launchpads.contains(launchpad), "alreadyExists");
+    launchpads.push(launchpad);
+    storage.store("launchpads", launchpads);
+    return 0;
+}
+
+entry remove_launchpad(launchpad: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
+    let storage: Storage = Storage::new();
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+    let launchpads: Hash[] = storage.load("launchpads").expect("noLaunchpads");
+    let idx: optional<u32> = launchpads.index_of(launchpad);
+    require(idx.is_some(), "notLaunchpad");
+    launchpads.remove(idx.unwrap());
+    storage.store("launchpads", launchpads);
+    return 0;
+}
+
+entry remove_feeless_whitelist(contract_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
+    let storage: Storage = Storage::new();
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let dao: DAO = storage.load("DAO").expect("missingDAO");
+    require(contract_hash != dao.hash, "cannotRemoveDAO");
+
+    let whitelist: Receiver[] = storage.load("feelessWhitelist").expect("noWhitelist");
+
+    let target: Receiver = Receiver::Contract { hash: contract_hash };
+    require(whitelist.contains(target), "notWhitelisted");
+
+    let idx: optional<u32> = whitelist.index_of(target);
+    require(idx.is_some(), "notWhitelisted");
+
+    whitelist.remove(idx.unwrap());
+    storage.store("feelessWhitelist", whitelist);
+    return 0;
+}
+
+entry add_owner(new_owner: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    require(!owners.contains(new_owner), "alreadyOwner");
+    owners.push(new_owner); 
+    storage.store("owners", owners);
+    return 0;
+}
+
+entry remove_owner(owner_to_remove: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").expect("missingOwners");
+    let idx: optional<u32> = owners.index_of(owner_to_remove);
+    require(idx.is_some(), "notOwner");
+    owners.remove(idx.unwrap());
+    storage.store("owners", owners);
     return 0;
 }
 
@@ -457,14 +550,15 @@ hook constructor() -> u64 {
     let source: Address = get_caller().expect("noCaller");
 
     let dao: DAO = DAO {
-    hash: Hash::from_hex("c6c37b6fdba051ee1e3ad6f79e04bdb8bdb072cfca0c57be1140887a528b9047"),
-    entry: 2
+    hash: Hash::from_hex("740e2f94ba264464551787ddd6fa5e3222da464c6c659848f6e9a9d0730ac288"),
+    entry: 3
     }
     let whitelist: Receiver[] = [Receiver::Contract { hash: dao.hash }]
+
     storage.store("DAO", dao);
     storage.store("feelessWhitelist", whitelist);
-    storage.store("launchpad", Hash::from_hex("c6c37b6fdba051ee1e3ad6f79e04bdb8bdb072cfca0c57be1140887a528b9047"));
-    storage.store("owner", source);
+    let owners: Address[] = [source, Address::from_string("xel:xz9574c80c4xegnvurazpmxhw5dlg2n0g9qm60uwgt75uqyx3pcsqzzra9m")];
+    storage.store("owners", owners);
     storage.store("dev_fee", 99950000 as u256)
     let default_tiers: FeeTier[] = [
         FeeTier { marketcap_threshold: 420, fee_multiplier: 99700000 },       // 0.3%

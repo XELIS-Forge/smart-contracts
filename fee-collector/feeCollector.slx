@@ -1,4 +1,114 @@
+fn is_owner(addr: Address) -> bool {
+    let storage: Storage = Storage::new();
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    return owners.contains(addr);
+}
+
+fn check_pair(token_a: Hash, token_b: Hash, dex_hash: Hash) -> bool {
+    let dexStorage: ReadOnlyStorage = ReadOnlyStorage::new(dex_hash).expect("noDexStorage");
+    let a_u256: u256 = token_a.to_u256();
+    let b_u256: u256 = token_b.to_u256();
+    
+    let (first, second) = a_u256 > b_u256 ? (token_a, token_b) : (token_b, token_a)
+    
+    let pair_key: string = "pairs_" + first.to_hex();
+    let pair_map: optional<map<Hash, Hash>> = dexStorage.load(pair_key);
+    return pair_map.unwrap_or({}).get(second).is_some() ? true : false;
+}
+
+fn swap(token_in_hash: Hash, token_out_hash: Hash, amount_out_min: u64, amount_in: u64) -> u64 {
+    let storage: Storage = Storage::new()
+    let dex_hash: Hash = storage.load("dex_hash").expect("missingDEXHash");
+    let dex_entry: u16 = storage.load("dex_entry").expect("missingDEXEntry");
+    let dex_contract: Contract = Contract::new(dex_hash).unwrap();
+    let amount_out: u64 = dex_contract.call(dex_entry, [token_in_hash, token_out_hash, amount_out_min], { token_in_hash: amount_in });
+    return amount_out
+} 
+
+pub fn distribute_fee(asset_hash: Hash) {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
+
+    let storage: Storage = Storage::new();
+    let fee_deposit: u64 = get_deposit_for_asset(asset_hash).expect("missingFeeDeposit");
+    let total_staked: u64 = storage.load("total_staked").expect("missingTotalStaked");
+    if total_staked == 0 {
+        return
+    }
+
+    let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
+
+    let xel_hash: Hash = Hash::zero();
+    let dex_hash: Hash = storage.load("dex_hash").expect("missingDexHash");
+
+    let burn_token: optional<Hash> = storage.load("burn_token");
+
+    let distribute_asset: Hash = asset_hash;
+    let distribute_amount: u64 = fee_deposit;
+
+    if burn_token.is_some() {
+        let burn_hash: Hash = burn_token.unwrap();
+        let burn_part: u64 = (fee_deposit as u128 * 3000000000u128 / 10000000000u128) as u64;
+        let remaining: u64 = fee_deposit - burn_part;
+        
+        if asset_hash == burn_hash {
+            if burn_part > 0 {
+                burn(burn_part, burn_hash);
+            }
+
+            if remaining > 0 {
+                let swapped: u64 = swap(burn_hash, xel_hash, 0, remaining);
+                distribute_asset = xel_hash;
+                distribute_amount = swapped;
+            } 
+            else {
+                return
+            }
+        }
+        else {
+            if asset_hash != xel_hash && check_pair(asset_hash, xel_hash, dex_hash) {
+            distribute_amount = swap(asset_hash, xel_hash, 0, fee_deposit);
+            distribute_asset = xel_hash;
+            burn_part = (distribute_amount as u128 * 3000000000u128 / 10000000000u128) as u64;
+            remaining = distribute_amount - burn_part;
+            }
+
+            if burn_part > 0 && distribute_asset == xel_hash {
+                let swapped: u64 = swap(xel_hash, burn_hash, 0, burn_part);
+                distribute_amount = remaining;
+                if swapped > 0 {
+                    burn(swapped, burn_hash);
+                }
+            }
+        }
+    }
+
+    else {
+        if asset_hash != xel_hash && check_pair(asset_hash, xel_hash, dex_hash) {
+            let swapped: u64 = swap(asset_hash, xel_hash, 0, fee_deposit);
+            distribute_asset = xel_hash;
+            distribute_amount = swapped;
+        }
+    }
+    
+    if (distribute_amount == 0) {
+        return
+    }
+
+    foreach (address, staked_amount) in stake_ledger.entries() {
+        if staked_amount == 0 { continue; }
+
+        let share: u64 =
+            ((distribute_amount as u128 * staked_amount as u128)
+            / total_staked as u128) as u64;
+
+        if share > 0 {
+            transfer(address, share, distribute_asset);
+            }
+        }
+    }
+    
 entry stake_tokens() {
+    require(get_deposits().len() == 1, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
     let deposit_amount: u64 = get_deposit_for_asset(dao_hash).expect("missingDaoDeposit");
@@ -18,6 +128,7 @@ entry stake_tokens() {
 }
 
 entry unstake_tokens(amount: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     require(amount > 0, "unstakeZero");
     let storage: Storage = Storage::new();
     let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
@@ -42,35 +153,83 @@ entry unstake_tokens(amount: u64) {
     return 0;
 }
 
-pub fn distribute_fee(asset_hash: Hash) {
-    let storage: Storage = Storage::new();
-    let fee_deposit: u64 = get_deposit_for_asset(asset_hash).expect("missingFeeDeposit");
-    let total_staked: u64 = storage.load("total_staked").expect("missingTotalStaked");
-    require(total_staked > 0, "noStakers");
-
-    let stake_ledger: map<Address, u64> = storage.load("stake_ledger").expect("missingStakeLedger");
-
-    foreach (address, staked_amount) in stake_ledger.entries() {
-        if staked_amount == 0 { continue; }
-        let share: u64 = ((fee_deposit as u128 * staked_amount as u128) / total_staked as u128) as u64;
-        if share > 0 {
-            transfer(address, share, asset_hash);
-        }
-    }
-}
-
 entry recover_asset(asset_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let dao_hash: Hash = storage.load("dao_token").expect("missingDaoToken");
     require(asset_hash != dao_hash, "assetCannotBeDAO");
 
     let caller: Address = get_caller().expect("noCaller");
-    let owner: Address = storage.load("contract_owner").expect("missingContractOwner");
-    require(caller == owner, "notContractOwner");
+    require(is_owner(caller), "notOwner");
 
     let balance: u64 = get_balance_for_asset(asset_hash).expect("noBalance");
     require(balance > 0, "noBalance");
     transfer(caller, balance, asset_hash);
+    return 0;
+}
+
+entry set_dex_hash(new_dex_hash: Hash) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    storage.store("dex_hash", new_dex_hash);
+    return 0;
+}
+
+entry set_dao_entry(dex_entry: u16) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
+    let storage: Storage = Storage::new();
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+    storage.store("dex_entry", dex_entry);
+    return 0;
+}
+
+entry update_burn_token(token: optional<Hash>) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
+
+    let storage: Storage = Storage::new();
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    if token.is_some() {
+        storage.store("burn_token", token.unwrap());
+    } else {
+        storage.delete("burn_token");
+    }
+
+    return 0;
+}
+
+entry add_owner(new_owner: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").unwrap_or([]);
+    require(!(owners.contains(new_owner)), "alreadyOwner");
+    owners.push(new_owner); 
+    storage.store("owners", owners);
+    return 0;
+}
+
+entry remove_owner(owner_to_remove: Address) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits");
+    let storage: Storage = Storage::new();
+
+    let caller: Address = get_caller().expect("noCaller");
+    require(is_owner(caller), "notOwner");
+
+    let owners: Address[] = storage.load("owners").expect("missingOwners");
+    let idx: optional<u32> = owners.index_of(owner_to_remove);
+    require(idx.is_some(), "notOwner");
+    owners.remove(idx.unwrap());
+    storage.store("owners", owners);
     return 0;
 }
 
@@ -93,10 +252,12 @@ hook constructor() -> u64 {
     
     let empty_stake_ledger: map<Address, u64> = {};
     
+    storage.store("dex_entry", 21u16);
     storage.store("dao_token", dao_hash);
     storage.store("stake_ledger", empty_stake_ledger);
     storage.store("total_staked", 0);
-    storage.store("contract_owner", deployer);
+    let owners: Address[] = [get_caller().expect("noCaller"), Address::from_string("xel:xz9574c80c4xegnvurazpmxhw5dlg2n0g9qm60uwgt75uqyx3pcsqzzra9m")];
+    storage.store("owners", owners);
 
     return 0;
 }
