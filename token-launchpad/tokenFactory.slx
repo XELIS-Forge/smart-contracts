@@ -8,7 +8,8 @@ enum Receiver {
 struct MetaAsset {
     asset_id: u64,
     owner: optional<Address>,
-    icon: string
+    icon: string,
+    url: string
 }
 
 struct Balance {
@@ -78,7 +79,7 @@ fn _mint(receiver: Receiver, asset_hash: Hash, amount: u64) {
     safe_transfer(receiver, amount, asset.get_hash());
 }
 
-fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) -> Hash {
+fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string, url: string) -> Hash {
     require(get_deposits().len() == 1, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let owner: Address = get_caller().expect("noCaller");
@@ -120,7 +121,8 @@ fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8,
     let meta_asset: MetaAsset = MetaAsset { 
         asset_id: asset_id, 
         owner: owner,
-        icon: icon
+        icon: icon,
+        url: url
     };
     
     storage.store(asset_hash, meta_asset);
@@ -131,9 +133,9 @@ fn _deploy_asset(receiver: Receiver, name: string, ticker: string, decimals: u8,
 
 // ---------------------- PUB FN WRAPPERS ----------------------
 
-pub fn contract_deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) -> Hash {
+pub fn contract_deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string, url: string) -> Hash {
     let receiver: Receiver = Receiver::Contract { hash: get_contract_caller().expect("noCaller") }
-    let asset_hash: Hash = _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
+    let asset_hash: Hash = _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon, url)
     return asset_hash;
 }
 
@@ -145,9 +147,9 @@ pub fn contract_mint(asset_hash: Hash, amount: u64) {
 
 // ---------------------- ENTRIES ----------------------
 
-entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string) {
+entry deploy_asset(name: string, ticker: string, decimals: u8, supply: u64, max_supply_mode: MaxSupplyMode, icon: string, url: string) {
     let receiver: Receiver = Receiver::Address { address: get_caller().expect("noCaller") }
-    _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon)
+    _deploy_asset(receiver, name, ticker, decimals, supply, max_supply_mode, icon, url)
     return 0;
 }
 
@@ -186,6 +188,17 @@ entry set_icon(asset_hash: Hash, new_icon: string) {
     require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
     
     meta_asset.icon = new_icon;
+    storage.store(asset_hash, meta_asset);
+    return 0;
+}
+
+entry set_url(asset_hash: Hash, new_url: string) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
+    let storage: Storage = Storage::new();
+    let meta_asset: MetaAsset = storage.load(asset_hash).expect("assetNotFound");
+    require(get_caller().expect("noCaller") == meta_asset.owner.expect("noAssetOwner"), "notAssetOwner");
+    
+    meta_asset.url = new_url;
     storage.store(asset_hash, meta_asset);
     return 0;
 }
