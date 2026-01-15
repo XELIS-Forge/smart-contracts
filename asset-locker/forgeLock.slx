@@ -64,6 +64,53 @@ entry lock_tokens(asset_hash: Hash, duration: u64, interval: u64, owner: Address
     return 0;
 }
 
+entry extend_lock(lock_id: Hash, additional_duration: u64) {
+    require(get_deposits().len() == 0, "incorrectNumDeposits")
+    require(additional_duration > 0, "durationMustBePositive")
+
+    let caller: Address = get_caller().expect("noCaller")
+    let storage: Storage = Storage::new()
+    let lock: Lock = storage.load(lock_id).expect("lockNotFound")
+
+    require(lock.owner == caller, "notLockOwner")
+    require(lock.amount_withdrawn < lock.amount_total, "lockFullyWithdrawn")
+
+    let current_t: u64 = now()
+
+    let original_duration: u64 = lock.end_time - lock.start_time
+    let is_cliff: bool = original_duration == lock.interval_seconds
+
+    if current_t >= lock.end_time {
+        lock.start_time = current_t
+        lock.last_withdraw_time = current_t
+        lock.amount_total = lock.amount_total - lock.amount_withdrawn
+        lock.amount_withdrawn = 0
+        lock.end_time = current_t + additional_duration
+    } else {
+        lock.end_time = lock.end_time + additional_duration
+    }
+
+    let total_duration: u64 = lock.end_time - lock.start_time
+
+    if is_cliff {
+        lock.interval_seconds = total_duration
+        lock.total_intervals = 1
+    } else {
+        let new_total_intervals: u64 = total_duration / lock.interval_seconds
+        if (total_duration % lock.interval_seconds) != 0 {
+            new_total_intervals += 1
+        }
+        require(new_total_intervals > 0, "invalidIntervalConfiguration")
+        lock.total_intervals = new_total_intervals
+    }
+
+    storage.store(lock_id, lock)
+
+    fire_event(4, lock_id)
+    return 0
+}
+
+
 entry withdraw(lock_id: Hash, amount: u64) {
     require(get_deposits().len() == 0, "incorrectNumDeposits")
     require(amount > 0, "amountMustBePositive");
