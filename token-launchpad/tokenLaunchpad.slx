@@ -1,6 +1,7 @@
 const NUM_BUCKETS: u64 = 1000;
 const LP_RESERVE_PERCENTAGE: u64 = 20;
 const PRICE_SCALE: u128 = 100000000;
+const STORAGE_KEY_WHITELIST: string[] = ["swap_contract", "asset_factory", "asset_factory_cost", "contract_deploy_asset", "contract_create_locked_pair", "contract_unlock_pair", "contract_add_liquidity"];
 
 // ---------------------- TYPES ----------------------
 
@@ -210,7 +211,7 @@ entry launch_token(
     let price_step: u128 =
         (final_price - start_price) / (NUM_BUCKETS as u128);
         
-        
+    // contract_deploy_asset
     let launch_cost: u64 = storage.load("asset_factory_cost").expect("noAssetFactoryCost");
     let asset_factory_hash: Hash =
         storage.load("asset_factory").expect("noAssetFactory");
@@ -228,7 +229,7 @@ entry launch_token(
     let swap: Contract = Contract::new(swap_hash).unwrap();
 
     let lp_asset_hash: Hash = swap.call(
-        0,
+        22,
         [token_hash, xelis],
         { xelis: PRICE_SCALE }
     );
@@ -271,30 +272,13 @@ entry sell(token_hash: Hash) {
     return 0;
 }
 
-entry set_swap_contract(swap_hash: Hash) {
+entry modify_storage(key: string, value: any) {
     require(get_deposits().len() == 0, "incorrectNumDeposits")
     let storage: Storage = Storage::new();
     let caller: Address = get_caller().expect("noCaller");
     require(is_owner(caller), "notOwner");
-    storage.store("swap_contract", swap_hash);
-    return 0;
-}
-
-entry set_factory_contract(factory_hash: Hash) {
-    require(get_deposits().len() == 0, "incorrectNumDeposits")
-    let storage: Storage = Storage::new();
-    let caller: Address = get_caller().expect("noCaller");
-    require(is_owner(caller), "notOwner");
-    storage.store("asset_factory", factory_hash);
-    return 0;
-}
-
-entry set_factory_cost(new_fee: u64) {
-    require(get_deposits().len() == 0, "incorrectNumDeposits")
-    let storage: Storage = Storage::new();
-    let caller: Address = get_caller().expect("noCaller");
-    require(is_owner(caller), "notOwner");
-    storage.store("asset_factory_cost", new_fee);
+    require(STORAGE_KEY_WHITELIST.contains(key), "illegalStorageModify");
+    storage.store(key, value);
     return 0;
 }
 
