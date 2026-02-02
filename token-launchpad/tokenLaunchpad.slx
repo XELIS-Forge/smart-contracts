@@ -133,7 +133,7 @@ fn _buy(token_hash: Hash, buyer: Address, xel_amount: u64) {
         let swap: Contract = Contract::new(swap_hash).unwrap();
         
         swap.call(
-            0,
+            23,
             [curve.lp_asset_hash],
             {}
         );
@@ -144,7 +144,7 @@ fn _buy(token_hash: Hash, buyer: Address, xel_amount: u64) {
         deposits.insert(xelis, curve.xel_raised);
 
         swap.call(
-            0,
+            18,
             [token_hash, xelis],
             deposits
         );
@@ -218,7 +218,7 @@ entry launch_token(
         Contract::new(asset_factory_hash).unwrap();
 
     let token_hash: Hash = asset_factory.call(
-        0,
+        7,
         [name, ticker, decimals, total_supply, MaxSupplyMode::Fixed{max_supply: total_supply}, icon],
         { xelis: launch_cost } 
     );
@@ -336,7 +336,7 @@ hook constructor() -> u64 {
     let owners: Address[] = [deployer];
     storage.store("owners", owners);
     storage.store("asset_factory_cost", 2 * PRICE_SCALE);
-    storage.store("swap_contract", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));
-    storage.store("asset_factory", Hash::from_hex("11eeb595cfc3e7079dce73448e00352c84e84172b5bf1f266ca45e9dd10f6ce5"));
+    storage.store("swap_contract", Hash::from_hex("0cd544f8f37ad23eb6cc1d397775e63ccc099a4eb305d84eb09424aa2a16fb6a"));
+    storage.store("asset_factory", Hash::from_hex("be83d2408ff11c8c807a631656ba9a8b30585594356fc550611c61613f90d694"));
     return 0;
 }
