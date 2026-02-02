@@ -131,21 +131,24 @@ fn _buy(token_hash: Hash, buyer: Address, xel_amount: u64) {
 
         // contract_unlock_pair
         let swap_hash: Hash = storage.load("swap_contract").expect("noSwapContract");
+        let contract_unlock_pair: u16 = storage.load("contract_unlock_pair").expect("noEntryID");
+
         let swap: Contract = Contract::new(swap_hash).unwrap();
         
         swap.call(
-            23,
+            contract_unlock_pair,
             [curve.lp_asset_hash],
             {}
         );
 
         // contract_add_liquidity
+        let contract_add_liquidity: u16 = storage.load("contract_add_liquidity").expect("noEntryID");
         let deposits: map<Hash, u64> = {};
         deposits.insert(token_hash, curve.lp_reserve);
         deposits.insert(xelis, curve.xel_raised);
 
         swap.call(
-            18,
+            contract_add_liquidity,
             [token_hash, xelis],
             deposits
         );
@@ -215,21 +218,23 @@ entry launch_token(
     let launch_cost: u64 = storage.load("asset_factory_cost").expect("noAssetFactoryCost");
     let asset_factory_hash: Hash =
         storage.load("asset_factory").expect("noAssetFactory");
+    let contract_deploy_asset: u16 = storage.load("contract_deploy_asset").expect("noEntryID");
     let asset_factory: Contract =
         Contract::new(asset_factory_hash).unwrap();
 
     let token_hash: Hash = asset_factory.call(
-        7,
+        contract_deploy_asset,
         [name, ticker, decimals, total_supply, MaxSupplyMode::Fixed{max_supply: total_supply}, icon],
         { xelis: launch_cost } 
     );
     
     // contract_create_locked_pair
     let swap_hash: Hash = storage.load("swap_contract").expect("noSwapContract");
+    let contract_create_locked_pair: u16 = storage.load("contract_create_locked_pair").expect("noEntryID");
     let swap: Contract = Contract::new(swap_hash).unwrap();
 
     let lp_asset_hash: Hash = swap.call(
-        22,
+        contract_create_locked_pair,
         [token_hash, xelis],
         { xelis: PRICE_SCALE }
     );
@@ -322,5 +327,9 @@ hook constructor() -> u64 {
     storage.store("asset_factory_cost", 2 * PRICE_SCALE);
     storage.store("swap_contract", Hash::from_hex("0cd544f8f37ad23eb6cc1d397775e63ccc099a4eb305d84eb09424aa2a16fb6a"));
     storage.store("asset_factory", Hash::from_hex("be83d2408ff11c8c807a631656ba9a8b30585594356fc550611c61613f90d694"));
+    storage.store("contract_deploy_asset", 7 as u16);
+    storage.store("contract_create_locked_pair", 22 as u16);
+    storage.store("contract_unlock_pair", 23 as u16);
+    storage.store("contract_add_liquidity", 18 as u16);
     return 0;
 }
